@@ -294,9 +294,7 @@ class DirectPlugin(ImagerPlugin):
                     return "/dev/%s%s%-d" % (part.disk, suffix, part.realnum)
 
     def cleanup(self):
-        if self._image:
-            self._image.cleanup()
-
+        logger.info("Intentionally disabled removing partition images.")
         # Move results to the output dir
         if not os.path.exists(self.outdir):
             os.makedirs(self.outdir)
