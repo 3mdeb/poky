@@ -30,7 +30,16 @@ IMAGE_CMD_wic () {
 	fi
 
 	BUILDDIR="${TOPDIR}" wic create "$wks" --vars "${STAGING_DIR}/${MACHINE}/imgdata/" -e "${IMAGE_BASENAME}" -o "$out/" ${WIC_CREATE_EXTRA_ARGS}
-	mv "$out/$(basename "${wks%.wks}")"*.direct "$out${IMAGE_NAME_SUFFIX}.wic"
+	wks_basename="$(basename "${wks%.wks}")"
+	mv "$out/$wks_basename"*.direct "$out${IMAGE_NAME_SUFFIX}.wic"
+	for partition in "$out/$wks_basename"*.direct.p?; do
+	partition_basename="$(basename "$partition")"
+	ext="${partition_basename##*.}"
+	    gzip -k "$partition"
+	partition_image_basename="${IMAGE_BASENAME}-${MACHINE}".direct."$ext"
+	    mv "$partition".gz "${DEPLOY_DIR_IMAGE}/$partition_image_basename".gz
+	# ln -s "$partition_basename.gz" "${DEPLOY_DIR_IMAGE}/$wks_basename".direct."$ext".gz
+	done
 	rm -rf "$out/"
 }
 IMAGE_CMD_wic[vardepsexclude] = "WKS_FULL_PATH WKS_FILES TOPDIR"
