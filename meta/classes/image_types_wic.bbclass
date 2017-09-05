@@ -35,9 +35,9 @@ IMAGE_CMD_wic () {
 	for partition in "$out/$wks_basename"*.direct.p?; do
 	partition_basename="$(basename "$partition")"
 	ext="${partition_basename##*.}"
-	    gzip -k "$partition"
+		gzip -f -9 -k "$partition"
 	partition_image_basename="${IMAGE_BASENAME}-${MACHINE}".direct."$ext"
-	    mv "$partition".gz "${DEPLOY_DIR_IMAGE}/$partition_image_basename".gz
+		mv "$partition".gz "${DEPLOY_DIR_IMAGE}/$partition_image_basename".gz
 	# ln -s "$partition_basename.gz" "${DEPLOY_DIR_IMAGE}/$wks_basename".direct."$ext".gz
 	done
 	rm -rf "$out/"
