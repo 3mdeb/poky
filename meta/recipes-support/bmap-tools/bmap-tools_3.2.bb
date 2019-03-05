@@ -13,7 +13,7 @@ SRC_URI = "ftp://ftp.infradead.org/pub/${BPN}/${BPN}-${PV}.tgz"
 SRC_URI[md5sum] = "92cdad1cb4dfa0cca7176c8e22752616"
 SRC_URI[sha256sum] = "cc6c7f7dc0a37e2a32deb127308e24e6c4b80bfb54f3803c308efab02bf2d434"
 
-RDEPENDS_${PN} = "python-core python-compression"
+RDEPENDS_${PN} = "python-core python-compression python-mmap python-setuptools python-fcntl python-argparse python-xml"
 
 inherit setuptools
 
