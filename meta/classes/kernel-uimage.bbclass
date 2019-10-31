@@ -1,9 +1,9 @@
 inherit kernel-uboot
 
 python __anonymous () {
-    if "uImage" in (d.getVar('KERNEL_IMAGETYPES') or "").split():
+    if "uImage" in d.getVar('KERNEL_IMAGETYPES'):
         depends = d.getVar("DEPENDS")
-        depends = "%s u-boot-mkimage-native" % depends
+        depends = "%s u-boot-tools-native" % depends
         d.setVar("DEPENDS", depends)
 
         # Override KERNEL_IMAGETYPE_FOR_MAKE variable, which is internal
@@ -27,7 +27,7 @@ do_uboot_mkimage() {
 	ENTRYPOINT=${UBOOT_ENTRYPOINT}
 	if [ -n "${UBOOT_ENTRYSYMBOL}" ]; then
 		ENTRYPOINT=`${HOST_PREFIX}nm ${B}/vmlinux | \
-			awk '$3=="${UBOOT_ENTRYSYMBOL}" {print $1}'`
+			awk '$3=="${UBOOT_ENTRYSYMBOL}" {print "0x"$1;exit}'`
 	fi
 
 	uboot-mkimage -A ${UBOOT_ARCH} -O linux -T kernel -C "${linux_comp}" -a ${UBOOT_LOADADDRESS} -e $ENTRYPOINT -n "${DISTRO_NAME}/${PV}/${MACHINE}" -d linux.bin ${B}/arch/${ARCH}/boot/uImage

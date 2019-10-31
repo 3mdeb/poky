@@ -20,6 +20,7 @@ SDK_EXT_task-populate-sdk-ext = "-ext"
 SDK_EXT_TYPE ?= "full"
 SDK_INCLUDE_PKGDATA ?= "0"
 SDK_INCLUDE_TOOLCHAIN ?= "${@'1' if d.getVar('SDK_EXT_TYPE') == 'full' else '0'}"
+SDK_INCLUDE_NATIVESDK ?= "0"
 
 SDK_RECRDEP_TASKS ?= ""
 
@@ -33,6 +34,7 @@ SDK_LOCAL_CONF_BLACKLIST ?= "CONF_VERSION \
                              DL_DIR \
                              SSTATE_DIR \
                              TMPDIR \
+                             BB_SERVER_TIMEOUT \
                             "
 SDK_INHERIT_BLACKLIST ?= "buildhistory icecc"
 SDK_UPDATE_URL ?= ""
@@ -161,18 +163,16 @@ def create_filtered_tasklist(d, sdkbasepath, tasklistfile, conf_initpath):
         except FileNotFoundError:
             pass
         os.rename(sdkbasepath, temp_sdkbasepath)
+        cmdprefix = '. %s .; ' % conf_initpath
+        logfile = d.getVar('WORKDIR') + '/tasklist_bb_log.txt'
         try:
-            cmdprefix = '. %s .; ' % conf_initpath
-            logfile = d.getVar('WORKDIR') + '/tasklist_bb_log.txt'
-            try:
-                oe.copy_buildsystem.check_sstate_task_list(d, get_sdk_install_targets(d), tasklistfile, cmdprefix=cmdprefix, cwd=temp_sdkbasepath, logfile=logfile)
-            except bb.process.ExecutionError as e:
-                msg = 'Failed to generate filtered task list for extensible SDK:\n%s' %  e.stdout.rstrip()
-                if 'attempted to execute unexpectedly and should have been setscened' in e.stdout:
-                    msg += '\n----------\n\nNOTE: "attempted to execute unexpectedly and should have been setscened" errors indicate this may be caused by missing sstate artifacts that were likely produced in earlier builds, but have been subsequently deleted for some reason.\n'
-                bb.fatal(msg)
-        finally:
-            os.rename(temp_sdkbasepath, sdkbasepath)
+            oe.copy_buildsystem.check_sstate_task_list(d, get_sdk_install_targets(d), tasklistfile, cmdprefix=cmdprefix, cwd=temp_sdkbasepath, logfile=logfile)
+        except bb.process.ExecutionError as e:
+            msg = 'Failed to generate filtered task list for extensible SDK:\n%s' %  e.stdout.rstrip()
+            if 'attempted to execute unexpectedly and should have been setscened' in e.stdout:
+                msg += '\n----------\n\nNOTE: "attempted to execute unexpectedly and should have been setscened" errors indicate this may be caused by missing sstate artifacts that were likely produced in earlier builds, but have been subsequently deleted for some reason.\n'
+            bb.fatal(msg)
+        os.rename(temp_sdkbasepath, sdkbasepath)
         # Clean out residue of running bitbake, which check_sstate_task_list()
         # will effectively do
         clean_esdk_builddir(d, sdkbasepath)
@@ -201,15 +201,9 @@ python copy_buildsystem () {
         workspace_name = 'orig-workspace'
     else:
         workspace_name = None
-    layers_copied = buildsystem.copy_bitbake_and_layers(baseoutpath + '/layers', workspace_name)
 
-    sdkbblayers = []
-    corebase = os.path.basename(d.getVar('COREBASE'))
-    for layer in layers_copied:
-        if corebase == os.path.basename(layer):
-            conf_bbpath = os.path.join('layers', layer, 'bitbake')
-        else:
-            sdkbblayers.append(layer)
+    corebase, sdkbblayers = buildsystem.copy_bitbake_and_layers(baseoutpath + '/layers', workspace_name)
+    conf_bbpath = os.path.join('layers', corebase, 'bitbake')
 
     for path in os.listdir(baseoutpath + '/layers'):
         relpath = os.path.join('layers', path, oe_init_env_script)
@@ -275,17 +269,20 @@ python copy_buildsystem () {
 
     # Copy uninative tarball
     # For now this is where uninative.bbclass expects the tarball
-    uninative_file = d.expand('${SDK_DEPLOY}/${BUILD_ARCH}-nativesdk-libc.tar.bz2')
-    uninative_checksum = bb.utils.sha256_file(uninative_file)
-    uninative_outdir = '%s/downloads/uninative/%s' % (baseoutpath, uninative_checksum)
-    bb.utils.mkdirhier(uninative_outdir)
-    shutil.copy(uninative_file, uninative_outdir)
+    if bb.data.inherits_class('uninative', d):
+        uninative_file = d.expand('${UNINATIVE_DLDIR}/' + d.getVarFlag("UNINATIVE_CHECKSUM", d.getVar("BUILD_ARCH")) + '/${UNINATIVE_TARBALL}')
+        uninative_checksum = bb.utils.sha256_file(uninative_file)
+        uninative_outdir = '%s/downloads/uninative/%s' % (baseoutpath, uninative_checksum)
+        bb.utils.mkdirhier(uninative_outdir)
+        shutil.copy(uninative_file, uninative_outdir)
 
     env_whitelist = (d.getVar('BB_ENV_EXTRAWHITE') or '').split()
     env_whitelist_values = {}
 
     # Create local.conf
     builddir = d.getVar('TOPDIR')
+    if derivative and os.path.exists(builddir + '/conf/site.conf'):
+        shutil.copyfile(builddir + '/conf/site.conf', baseoutpath + '/conf/site.conf')
     if derivative and os.path.exists(builddir + '/conf/auto.conf'):
         shutil.copyfile(builddir + '/conf/auto.conf', baseoutpath + '/conf/auto.conf')
     if derivative:
@@ -303,6 +300,9 @@ python copy_buildsystem () {
                 return origvalue, op, 0, True
         varlist = ['[^#=+ ]*']
         oldlines = []
+        if os.path.exists(builddir + '/conf/site.conf'):
+            with open(builddir + '/conf/site.conf', 'r') as f:
+                oldlines += f.readlines()
         if os.path.exists(builddir + '/conf/auto.conf'):
             with open(builddir + '/conf/auto.conf', 'r') as f:
                 oldlines += f.readlines()
@@ -325,8 +325,9 @@ python copy_buildsystem () {
             f.write('TCLIBCAPPEND = ""\n')
             f.write('DL_DIR = "${TOPDIR}/downloads"\n')
 
-            f.write('INHERIT += "%s"\n' % 'uninative')
-            f.write('UNINATIVE_CHECKSUM[%s] = "%s"\n\n' % (d.getVar('BUILD_ARCH'), uninative_checksum))
+            if bb.data.inherits_class('uninative', d):
+               f.write('INHERIT += "%s"\n' % 'uninative')
+               f.write('UNINATIVE_CHECKSUM[%s] = "%s"\n\n' % (d.getVar('BUILD_ARCH'), uninative_checksum))
             f.write('CONF_VERSION = "%s"\n\n' % d.getVar('CONF_VERSION', False))
 
             # Some classes are not suitable for SDK, remove them from INHERIT
@@ -344,6 +345,9 @@ python copy_buildsystem () {
             # Warn if the sigs in the locked-signature file don't match
             # the sig computed from the metadata.
             f.write('SIGGEN_LOCKEDSIGS_TASKSIG_CHECK = "warn"\n\n')
+
+            # We want to be able to set this without a full reparse
+            f.write('BB_HASHCONFIG_WHITELIST_append = " SIGGEN_UNLOCKED_RECIPES"\n\n')
 
             # Set up whitelist for run on install
             f.write('BB_SETSCENE_ENFORCE_WHITELIST = "%:* *:do_shared_workdir *:do_rm_work wic-tools:* *:do_addto_recipe_sysroot"\n\n')
@@ -375,6 +379,11 @@ python copy_buildsystem () {
             f.write('require conf/locked-sigs.inc\n')
             f.write('require conf/unlocked-sigs.inc\n')
 
+    if os.path.exists(builddir + '/cache/bb_unihashes.dat'):
+        bb.parse.siggen.save_unitaskhashes()
+        bb.utils.mkdirhier(os.path.join(baseoutpath, 'cache'))
+        shutil.copyfile(builddir + '/cache/bb_unihashes.dat', baseoutpath + '/cache/bb_unihashes.dat')
+
     # Write a templateconf.cfg
     with open(baseoutpath + '/conf/templateconf.cfg', 'w') as f:
         f.write('meta/conf\n')
@@ -398,9 +407,27 @@ python copy_buildsystem () {
     excluded_targets = get_sdk_install_targets(d, images_only=True)
     sigfile = d.getVar('WORKDIR') + '/locked-sigs.inc'
     lockedsigs_pruned = baseoutpath + '/conf/locked-sigs.inc'
+    #nativesdk-only sigfile to merge into locked-sigs.inc
+    sdk_include_nativesdk = (d.getVar("SDK_INCLUDE_NATIVESDK") == '1')
+    nativesigfile = d.getVar('WORKDIR') + '/locked-sigs_nativesdk.inc'
+    nativesigfile_pruned = d.getVar('WORKDIR') + '/locked-sigs_nativesdk_pruned.inc'
+
+    if sdk_include_nativesdk:
+        oe.copy_buildsystem.prune_lockedsigs([],
+                                             excluded_targets.split(),
+                                             nativesigfile,
+                                             True,
+                                             nativesigfile_pruned)
+
+        oe.copy_buildsystem.merge_lockedsigs([],
+                                             sigfile,
+                                             nativesigfile_pruned,
+                                             sigfile)
+
     oe.copy_buildsystem.prune_lockedsigs([],
                                          excluded_targets.split(),
                                          sigfile,
+                                         False,
                                          lockedsigs_pruned)
 
     sstate_out = baseoutpath + '/sstate-cache'
@@ -411,12 +438,17 @@ python copy_buildsystem () {
 
     sdk_include_toolchain = (d.getVar('SDK_INCLUDE_TOOLCHAIN') == '1')
     sdk_ext_type = d.getVar('SDK_EXT_TYPE')
-    if sdk_ext_type != 'minimal' or sdk_include_toolchain or derivative:
+    if (sdk_ext_type != 'minimal' or sdk_include_toolchain or derivative) and not sdk_include_nativesdk:
         # Create the filtered task list used to generate the sstate cache shipped with the SDK
         tasklistfn = d.getVar('WORKDIR') + '/tasklist.txt'
         create_filtered_tasklist(d, baseoutpath, tasklistfn, conf_initpath)
     else:
         tasklistfn = None
+
+    if os.path.exists(builddir + '/cache/bb_unihashes.dat'):
+        bb.parse.siggen.save_unitaskhashes()
+        bb.utils.mkdirhier(os.path.join(baseoutpath, 'cache'))
+        shutil.copyfile(builddir + '/cache/bb_unihashes.dat', baseoutpath + '/cache/bb_unihashes.dat')
 
     # Add packagedata if enabled
     if d.getVar('SDK_INCLUDE_PKGDATA') == '1':
@@ -530,10 +562,11 @@ def get_sdk_required_utilities(buildtools_fn, d):
 
 install_tools() {
 	install -d ${SDK_OUTPUT}/${SDKPATHNATIVE}${bindir_nativesdk}
-	scripts="devtool recipetool oe-find-native-sysroot runqemu*"
+	scripts="devtool recipetool oe-find-native-sysroot runqemu* wic"
 	for script in $scripts; do
 		for scriptfn in `find ${SDK_OUTPUT}/${SDKPATH}/${scriptrelpath} -maxdepth 1 -executable -name "$script"`; do
-			lnr ${scriptfn} ${SDK_OUTPUT}/${SDKPATHNATIVE}${bindir_nativesdk}/`basename $scriptfn`
+			targetscriptfn="${SDK_OUTPUT}/${SDKPATHNATIVE}${bindir_nativesdk}/$(basename $scriptfn)"
+			test -e ${targetscriptfn} || lnr ${scriptfn} ${targetscriptfn}
 		done
 	done
 	# We can't use the same method as above because files in the sysroot won't exist at this point
@@ -585,11 +618,8 @@ sdk_ext_preinst() {
 		exit 1
 	fi
 	SDK_EXTENSIBLE="1"
-	if [ "$publish" = "1" ] ; then
-		EXTRA_TAR_OPTIONS="$EXTRA_TAR_OPTIONS --exclude=ext-sdk-prepare.py"
-		if [ "${SDK_EXT_TYPE}" = "minimal" ] ; then
-			EXTRA_TAR_OPTIONS="$EXTRA_TAR_OPTIONS --exclude=sstate-cache"
-		fi
+	if [ "$publish" = "1" ] && [ "${SDK_EXT_TYPE}" = "minimal" ] ; then
+		EXTRA_TAR_OPTIONS="$EXTRA_TAR_OPTIONS --exclude=sstate-cache"
 	fi
 }
 SDK_PRE_INSTALL_COMMAND_task-populate-sdk-ext = "${sdk_ext_preinst}"
@@ -631,6 +661,8 @@ sdk_ext_postinst() {
 		# sourcing a script. That is why this has to look so ugly.
 		LOGFILE="$target_sdk_dir/preparing_build_system.log"
 		sh -c ". buildtools/environment-setup* > $LOGFILE && cd $target_sdk_dir/`dirname ${oe_init_build_env_path}` && set $target_sdk_dir && . $target_sdk_dir/${oe_init_build_env_path} $target_sdk_dir >> $LOGFILE && python $target_sdk_dir/ext-sdk-prepare.py $LOGFILE '${SDK_INSTALL_TARGETS}'" || { echo "printf 'ERROR: this SDK was not fully installed and needs reinstalling\n'" >> $env_setup_script ; exit 1 ; }
+	fi
+	if [ -e $target_sdk_dir/ext-sdk-prepare.py ]; then
 		rm $target_sdk_dir/ext-sdk-prepare.py
 	fi
 	echo done
@@ -652,9 +684,17 @@ fakeroot python do_populate_sdk_ext() {
     d.setVar('SDK_REQUIRED_UTILITIES', get_sdk_required_utilities(buildtools_fn, d))
     d.setVar('SDK_BUILDTOOLS_INSTALLER', buildtools_fn)
     d.setVar('SDKDEPLOYDIR', '${SDKEXTDEPLOYDIR}')
-
+    # ESDKs have a libc from the buildtools so ensure we don't ship linguas twice
+    d.delVar('SDKIMAGE_LINGUAS')
+    if d.getVar("SDK_INCLUDE_NATIVESDK") == '1':
+        generate_nativesdk_lockedsigs(d)
     populate_sdk_common(d)
 }
+
+def generate_nativesdk_lockedsigs(d):
+    import oe.copy_buildsystem
+    sigfile = d.getVar('WORKDIR') + '/locked-sigs_nativesdk.inc'
+    oe.copy_buildsystem.generate_locked_sigs(sigfile, d)
 
 def get_ext_sdk_depends(d):
     # Note: the deps varflag is a list not a string, so we need to specify expand=False
@@ -691,7 +731,7 @@ def get_sdk_ext_rdepends(d):
 do_populate_sdk_ext[dirs] = "${@d.getVarFlag('do_populate_sdk', 'dirs', False)}"
 
 do_populate_sdk_ext[depends] = "${@d.getVarFlag('do_populate_sdk', 'depends', False)} \
-                                buildtools-tarball:do_populate_sdk uninative-tarball:do_populate_sdk \
+                                buildtools-tarball:do_populate_sdk \
                                 ${@'meta-world-pkgdata:do_collect_packagedata' if d.getVar('SDK_INCLUDE_PKGDATA') == '1' else ''} \
                                 ${@'meta-extsdk-toolchain:do_locked_sigs' if d.getVar('SDK_INCLUDE_TOOLCHAIN') == '1' else ''}"
 
@@ -715,9 +755,9 @@ SDKEXTDEPLOYDIR = "${WORKDIR}/deploy-${PN}-populate-sdk-ext"
 
 SSTATETASKS += "do_populate_sdk_ext"
 SSTATE_SKIP_CREATION_task-populate-sdk-ext = '1'
-do_populate_sdk_ext[cleandirs] = "${SDKDEPLOYDIR}"
+do_populate_sdk_ext[cleandirs] = "${SDKEXTDEPLOYDIR}"
 do_populate_sdk_ext[sstate-inputdirs] = "${SDKEXTDEPLOYDIR}"
 do_populate_sdk_ext[sstate-outputdirs] = "${SDK_DEPLOY}"
-do_populate_sdk_ext[stamp-extra-info] = "${MACHINE}"
+do_populate_sdk_ext[stamp-extra-info] = "${MACHINE_ARCH}"
 
 addtask populate_sdk_ext after do_sdk_depends

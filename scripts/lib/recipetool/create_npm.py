@@ -2,20 +2,11 @@
 #
 # Copyright (C) 2016 Intel Corporation
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 import os
+import sys
 import logging
 import subprocess
 import tempfile
@@ -73,7 +64,6 @@ class NpmRecipeHandler(RecipeHandler):
                     license = license.replace(' ', '_')
                     if not license[0] == '(':
                         license = '(' + license + ')'
-                    print('LICENSE: {}'.format(license))
                 else:
                     license = license.replace('AND', '&')
                     if license[0] == '(':
@@ -91,7 +81,7 @@ class NpmRecipeHandler(RecipeHandler):
             runenv = dict(os.environ, PATH=d.getVar('PATH'))
             bb.process.run('npm shrinkwrap', cwd=srctree, stderr=subprocess.STDOUT, env=runenv, shell=True)
         except bb.process.ExecutionError as e:
-            logger.warn('npm shrinkwrap failed:\n%s' % e.stdout)
+            logger.warning('npm shrinkwrap failed:\n%s' % e.stdout)
             return
 
         tmpfile = os.path.join(localfilesdir, 'npm-shrinkwrap.json')
@@ -108,12 +98,12 @@ class NpmRecipeHandler(RecipeHandler):
                            cwd=srctree, stderr=subprocess.STDOUT, env=runenv, shell=True)
         relockbin = os.path.join(NpmRecipeHandler.lockdownpath, 'node_modules', 'lockdown', 'relock.js')
         if not os.path.exists(relockbin):
-            logger.warn('Could not find relock.js within lockdown directory; skipping lockdown')
+            logger.warning('Could not find relock.js within lockdown directory; skipping lockdown')
             return
         try:
             bb.process.run('node %s' % relockbin, cwd=srctree, stderr=subprocess.STDOUT, env=runenv, shell=True)
         except bb.process.ExecutionError as e:
-            logger.warn('lockdown-relock failed:\n%s' % e.stdout)
+            logger.warning('lockdown-relock failed:\n%s' % e.stdout)
             return
 
         tmpfile = os.path.join(localfilesdir, 'lockdown.json')
@@ -164,40 +154,9 @@ class NpmRecipeHandler(RecipeHandler):
                 lines_before.append(line)
         return updated
 
-    def _replace_license_vars(self, srctree, lines_before, handled, extravalues, d):
-        for item in handled:
-            if isinstance(item, tuple):
-                if item[0] == 'license':
-                    del item
-                    break
-
-        calledvars = []
-        def varfunc(varname, origvalue, op, newlines):
-            if varname in ['LICENSE', 'LIC_FILES_CHKSUM']:
-                for i, e in enumerate(reversed(newlines)):
-                    if not e.startswith('#'):
-                        stop = i
-                        while stop > 0:
-                            newlines.pop()
-                            stop -= 1
-                        break
-                calledvars.append(varname)
-                if len(calledvars) > 1:
-                    # The second time around, put the new license text in
-                    insertpos = len(newlines)
-                    handle_license_vars(srctree, newlines, handled, extravalues, d)
-                return None, None, 0, True
-            return origvalue, None, 0, True
-        updated, newlines = bb.utils.edit_metadata(lines_before, ['LICENSE', 'LIC_FILES_CHKSUM'], varfunc)
-        if updated:
-            del lines_before[:]
-            lines_before.extend(newlines)
-        else:
-            raise Exception('Did not find license variables')
-
     def process(self, srctree, classes, lines_before, lines_after, handled, extravalues):
         import bb.utils
-        import oe
+        import oe.package
         from collections import OrderedDict
 
         if 'buildsystem' in handled:
@@ -228,10 +187,7 @@ class NpmRecipeHandler(RecipeHandler):
 
                 fetchdev = extravalues['fetchdev'] or None
                 deps, optdeps, devdeps = self.get_npm_package_dependencies(data, fetchdev)
-                updated = self._handle_dependencies(d, deps, optdeps, devdeps, lines_before, srctree)
-                if updated:
-                    # We need to redo the license stuff
-                    self._replace_license_vars(srctree, lines_before, handled, extravalues, d)
+                self._handle_dependencies(d, deps, optdeps, devdeps, lines_before, srctree)
 
                 # Shrinkwrap
                 localfilesdir = tempfile.mkdtemp(prefix='recipetool-npm')
@@ -242,11 +198,14 @@ class NpmRecipeHandler(RecipeHandler):
 
                 # Split each npm module out to is own package
                 npmpackages = oe.package.npm_split_package_dirs(srctree)
+                licvalues = None
                 for item in handled:
                     if isinstance(item, tuple):
                         if item[0] == 'license':
                             licvalues = item[1]
                             break
+                if not licvalues:
+                    licvalues = handle_license_vars(srctree, lines_before, handled, extravalues, d)
                 if licvalues:
                     # Augment the license list with information we have in the packages
                     licenses = {}
@@ -267,13 +226,7 @@ class NpmRecipeHandler(RecipeHandler):
                     all_licenses = list(set([item.replace('_', ' ') for pkglicense in pkglicenses.values() for item in pkglicense]))
                     if '&' in all_licenses:
                         all_licenses.remove('&')
-                    # Go back and update the LICENSE value since we have a bit more
-                    # information than when that was written out (and we know all apply
-                    # vs. there being a choice, so we can join them with &)
-                    for i, line in enumerate(lines_before):
-                        if line.startswith('LICENSE = '):
-                            lines_before[i] = 'LICENSE = "%s"' % ' & '.join(all_licenses)
-                            break
+                    extravalues['LICENSE'] = ' & '.join(all_licenses)
 
                 # Need to move S setting after inherit npm
                 for i, line in enumerate(lines_before):
@@ -358,6 +311,7 @@ class NpmRecipeHandler(RecipeHandler):
                     blacklist = True
                     break
             if (not blacklist and 'linux' not in pkg_os) or '!linux' in pkg_os:
+                pkg = pdata.get('name', 'Unnamed package')
                 logger.debug(2, "Skipping %s since it's incompatible with Linux" % pkg)
                 return False
         return True

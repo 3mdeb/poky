@@ -1,6 +1,9 @@
+#
+# SPDX-License-Identifier: MIT
+#
+
 from oeqa.selftest.case import OESelftestTestCase
 from oeqa.utils.commands import runCmd, bitbake, get_bb_var, runqemu
-from oeqa.core.decorator.oeid import OETestID
 from oeqa.utils.sshcontrol import SSHControl
 import os
 import json
@@ -10,7 +13,6 @@ class ImageFeatures(OESelftestTestCase):
     test_user = 'tester'
     root_user = 'root'
 
-    @OETestID(1107)
     def test_non_root_user_can_connect_via_ssh_without_password(self):
         """
         Summary: Check if non root user can connect via ssh without password
@@ -21,7 +23,7 @@ class ImageFeatures(OESelftestTestCase):
         AutomatedBy: Daniel Istrate <daniel.alexandrux.istrate@intel.com>
         """
 
-        features = 'EXTRA_IMAGE_FEATURES = "ssh-server-openssh empty-root-password allow-empty-password"\n'
+        features = 'EXTRA_IMAGE_FEATURES = "ssh-server-openssh empty-root-password allow-empty-password allow-root-login"\n'
         features += 'INHERIT += "extrausers"\n'
         features += 'EXTRA_USERS_PARAMS = "useradd -p \'\' {}; usermod -s /bin/sh {};"'.format(self.test_user, self.test_user)
         self.write_config(features)
@@ -36,7 +38,6 @@ class ImageFeatures(OESelftestTestCase):
                 status, output = ssh.run("true")
                 self.assertEqual(status, 0, 'ssh to user %s failed with %s' % (user, output))
 
-    @OETestID(1115)
     def test_all_users_can_connect_via_ssh_without_password(self):
         """
         Summary:     Check if all users can connect via ssh without password
@@ -47,7 +48,7 @@ class ImageFeatures(OESelftestTestCase):
         AutomatedBy: Daniel Istrate <daniel.alexandrux.istrate@intel.com>
         """
 
-        features = 'EXTRA_IMAGE_FEATURES = "ssh-server-openssh allow-empty-password"\n'
+        features = 'EXTRA_IMAGE_FEATURES = "ssh-server-openssh allow-empty-password allow-root-login"\n'
         features += 'INHERIT += "extrausers"\n'
         features += 'EXTRA_USERS_PARAMS = "useradd -p \'\' {}; usermod -s /bin/sh {};"'.format(self.test_user, self.test_user)
         self.write_config(features)
@@ -66,7 +67,6 @@ class ImageFeatures(OESelftestTestCase):
                     self.assertEqual(status, 0, 'ssh to user tester failed with %s' % output)
 
 
-    @OETestID(1116)
     def test_clutter_image_can_be_built(self):
         """
         Summary:     Check if clutter image can be built
@@ -79,7 +79,6 @@ class ImageFeatures(OESelftestTestCase):
         # Build a core-image-clutter
         bitbake('core-image-clutter')
 
-    @OETestID(1117)
     def test_wayland_support_in_image(self):
         """
         Summary:     Check Wayland support in image
@@ -97,7 +96,6 @@ class ImageFeatures(OESelftestTestCase):
         # Build a core-image-weston
         bitbake('core-image-weston')
 
-    @OETestID(1497)
     def test_bmap(self):
         """
         Summary:     Check bmap support
@@ -163,7 +161,12 @@ class ImageFeatures(OESelftestTestCase):
             sysroot = get_bb_var('STAGING_DIR_NATIVE', 'core-image-minimal')
             result = runCmd('qemu-img info --output json %s' % image_path,
                             native_sysroot=sysroot)
-            self.assertTrue(json.loads(result.output).get('format') == itype)
+            try:
+                data = json.loads(result.output)
+                self.assertEqual(data.get('format'), itype,
+                                 msg="Unexpected format in '%s'" % (result.output))
+            except json.decoder.JSONDecodeError:
+                self.fail("Could not parse '%ss'" % result.output)
 
     def test_long_chain_conversion(self):
         """
@@ -206,7 +209,7 @@ class ImageFeatures(OESelftestTestCase):
         image_name = 'core-image-minimal'
 
         img_types = [itype for itype in get_bb_var("IMAGE_TYPES", image_name).split() \
-                         if itype not in ('container', 'elf', 'multiubi')]
+                         if itype not in ('container', 'elf', 'f2fs', 'multiubi')]
 
         config = 'IMAGE_FSTYPES += "%s"\n'\
                  'MKUBIFS_ARGS ?= "-m 2048 -e 129024 -c 2047"\n'\
@@ -223,3 +226,39 @@ class ImageFeatures(OESelftestTestCase):
             # check if result image is in deploy directory
             self.assertTrue(os.path.exists(image_path),
                             "%s image %s doesn't exist" % (itype, image_path))
+
+    def test_useradd_static(self):
+        config = """
+USERADDEXTENSION = "useradd-staticids"
+USERADD_ERROR_DYNAMIC = "skip"
+USERADD_UID_TABLES += "files/static-passwd"
+USERADD_GID_TABLES += "files/static-group"
+"""
+        self.write_config(config)
+        bitbake("core-image-base")
+
+    def test_no_busybox_base_utils(self):
+        config = """
+# Enable x11
+DISTRO_FEATURES_append += "x11"
+
+# Switch to systemd
+DISTRO_FEATURES += "systemd"
+VIRTUAL-RUNTIME_init_manager = "systemd"
+VIRTUAL-RUNTIME_initscripts = ""
+VIRTUAL-RUNTIME_syslog = ""
+VIRTUAL-RUNTIME_login_manager = "shadow-base"
+DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"
+
+# Replace busybox
+PREFERRED_PROVIDER_virtual/base-utils = "packagegroup-core-base-utils"
+VIRTUAL-RUNTIME_base-utils = "packagegroup-core-base-utils"
+VIRTUAL-RUNTIME_base-utils-hwclock = "util-linux-hwclock"
+VIRTUAL-RUNTIME_base-utils-syslog = ""
+
+# Blacklist busybox
+PNBLACKLIST[busybox] = "Don't build this"
+"""
+        self.write_config(config)
+
+        bitbake("--graphviz core-image-sato")

@@ -6,18 +6,8 @@ Provide an interface to interact with the bitbake server through 'commands'
 
 # Copyright (C) 2006-2007  Richard Purdie
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 """
 The bitbake server takes 'commands' from its UI/commandline.
@@ -78,7 +68,8 @@ class Command:
                 if not hasattr(command_method, 'readonly') or False == getattr(command_method, 'readonly'):
                     return None, "Not able to execute not readonly commands in readonly mode"
             try:
-                if getattr(command_method, 'needconfig', False):
+                self.cooker.process_inotify_updates()
+                if getattr(command_method, 'needconfig', True):
                     self.cooker.updateCacheSync()
                 result = command_method(self, commandline)
             except CommandError as exc:
@@ -98,6 +89,7 @@ class Command:
 
     def runAsyncCommand(self):
         try:
+            self.cooker.process_inotify_updates()
             if self.cooker.state in (bb.cooker.state.error, bb.cooker.state.shutdown, bb.cooker.state.forceshutdown):
                 # updateCache will trigger a shutdown of the parser
                 # and then raise BBHandledException triggering an exit
@@ -142,6 +134,9 @@ class Command:
             bb.event.fire(CommandCompleted(), self.cooker.data)
         self.currentAsyncCommand = None
         self.cooker.finishcommand()
+
+    def reset(self):
+        self.remotedatastores = bb.remotedata.RemoteDatastores(self.cooker)
 
 def split_mc_pn(pn):
     if pn.startswith("multiconfig:"):
@@ -281,6 +276,7 @@ class CommandsSync:
     parseConfiguration.needconfig = False
 
     def getLayerPriorities(self, command, params):
+        command.cooker.parseConfiguration()
         ret = []
         # regex objects cannot be marshalled by xmlrpc
         for collection, pattern, regex, pri in command.cooker.bbfile_config_priorities:

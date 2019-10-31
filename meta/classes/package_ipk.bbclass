@@ -8,19 +8,15 @@ IPKGCONF_SDK =  "${WORKDIR}/opkg-sdk.conf"
 PKGWRITEDIRIPK = "${WORKDIR}/deploy-ipks"
 
 # Program to be used to build opkg packages
-OPKGBUILDCMD ??= "opkg-build"
+OPKGBUILDCMD ??= 'opkg-build -Z xz -a "${XZ_DEFAULTS}"'
 
 OPKG_ARGS += "--force_postinstall --prefer-arch-to-version"
 OPKG_ARGS += "${@['', '--no-install-recommends'][d.getVar("NO_RECOMMENDATIONS") == "1"]}"
-OPKG_ARGS += "${@['', '--add-exclude ' + ' --add-exclude '.join((d.getVar('PACKAGE_EXCLUDE') or "").split())][(d.getVar("PACKAGE_EXCLUDE") or "") != ""]}"
+OPKG_ARGS += "${@['', '--add-exclude ' + ' --add-exclude '.join((d.getVar('PACKAGE_EXCLUDE') or "").split())][(d.getVar("PACKAGE_EXCLUDE") or "").strip() != ""]}"
 
-OPKGLIBDIR = "${localstatedir}/lib"
+OPKGLIBDIR ??= "${localstatedir}/lib"
 
 python do_package_ipk () {
-    from multiprocessing import Process
-
-    oldcwd = os.getcwd()
-
     workdir = d.getVar('WORKDIR')
     outdir = d.getVar('PKGWRITEDIRIPK')
     tmpdir = d.getVar('TMPDIR')
@@ -39,22 +35,7 @@ python do_package_ipk () {
     if os.access(os.path.join(tmpdir, "stamps", "IPK_PACKAGE_INDEX_CLEAN"), os.R_OK):
         os.unlink(os.path.join(tmpdir, "stamps", "IPK_PACKAGE_INDEX_CLEAN"))
 
-    max_process = int(d.getVar("BB_NUMBER_THREADS") or os.cpu_count() or 1)
-    launched = []
-    pkgs = packages.split()
-    while pkgs:
-        if len(launched) < max_process:
-            p = Process(target=ipk_write_pkg, args=(pkgs.pop(), d))
-            p.start()
-            launched.append(p)
-        for q in launched:
-            # The finished processes are joined when calling is_alive()
-            if not q.is_alive():
-                launched.remove(q)
-    for p in launched:
-        p.join()
-
-    os.chdir(oldcwd)
+    oe.utils.multiprocess_launch(ipk_write_pkg, packages.split(), d, extraargs=(d,))
 }
 do_package_ipk[vardeps] += "ipk_write_pkg"
 do_package_ipk[vardepsexclude] = "BB_NUMBER_THREADS"
@@ -244,7 +225,9 @@ def ipk_write_pkg(pkg, d):
 
         os.chdir(basedir)
         subprocess.check_output("PATH=\"%s\" %s %s %s" % (localdata.getVar("PATH"),
-                                                          d.getVar("OPKGBUILDCMD"), pkg, pkgoutdir), shell=True)
+                                                          d.getVar("OPKGBUILDCMD"), pkg, pkgoutdir),
+                                stderr=subprocess.STDOUT,
+                                shell=True)
 
         if d.getVar('IPK_SIGN_PACKAGES') == '1':
             ipkver = "%s-%s" % (d.getVar('PKGV'), d.getVar('PKGR'))
@@ -275,7 +258,7 @@ addtask do_package_write_ipk_setscene
 
 python () {
     if d.getVar('PACKAGES') != '':
-        deps = ' opkg-utils-native:do_populate_sysroot virtual/fakeroot-native:do_populate_sysroot'
+        deps = ' opkg-utils-native:do_populate_sysroot virtual/fakeroot-native:do_populate_sysroot xz-native:do_populate_sysroot'
         d.appendVarFlag('do_package_write_ipk', 'depends', deps)
         d.setVarFlag('do_package_write_ipk', 'fakeroot', "1")
 }

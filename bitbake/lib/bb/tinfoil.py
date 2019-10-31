@@ -4,18 +4,8 @@
 # Copyright (C) 2011 Mentor Graphics Corporation
 # Copyright (C) 2006-2012 Richard Purdie
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 import logging
 import os
@@ -322,10 +312,15 @@ class Tinfoil:
         self.server_connection = None
         self.recipes_parsed = False
         self.quiet = 0
+        self.oldhandlers = self.logger.handlers[:]
         if setup_logging:
             # This is the *client-side* logger, nothing to do with
             # logging messages from the server
             bb.msg.logger_create('BitBake', output)
+            self.localhandlers = []
+            for handler in self.logger.handlers:
+                if handler not in self.oldhandlers:
+                    self.localhandlers.append(handler)
 
     def __enter__(self):
         return self
@@ -381,10 +376,15 @@ class Tinfoil:
         cookerconfig = CookerConfiguration()
         cookerconfig.setConfigParameters(config_params)
 
+        if not config_only:
+            # Disable local loggers because the UI module is going to set up its own
+            for handler in self.localhandlers:
+                self.logger.handlers.remove(handler)
+            self.localhandlers = []
+
         self.server_connection, ui_module = setup_bitbake(config_params,
                             cookerconfig,
-                            extrafeatures,
-                            setup_logging=False)
+                            extrafeatures)
 
         self.ui_module = ui_module
 
@@ -594,13 +594,16 @@ class Tinfoil:
         recipecache = self.cooker.recipecaches[mc]
         prov = self.find_best_provider(pn)
         fn = prov[3]
-        actual_pn = recipecache.pkg_fn[fn]
-        recipe = TinfoilRecipeInfo(recipecache,
-                                    self.config_data,
-                                    pn=actual_pn,
-                                    fn=fn,
-                                    fns=recipecache.pkg_pn[actual_pn])
-        return recipe
+        if fn:
+            actual_pn = recipecache.pkg_fn[fn]
+            recipe = TinfoilRecipeInfo(recipecache,
+                                        self.config_data,
+                                        pn=actual_pn,
+                                        fn=fn,
+                                        fns=recipecache.pkg_pn[actual_pn])
+            return recipe
+        else:
+            return None
 
     def parse_recipe(self, pn):
         """
@@ -625,17 +628,24 @@ class Tinfoil:
                          specify config_data then you cannot use a virtual
                          specification for fn.
         """
-        if appends and appendlist == []:
-            appends = False
-        if config_data:
-            dctr = bb.remotedata.RemoteDatastores.transmit_datastore(config_data)
-            dscon = self.run_command('parseRecipeFile', fn, appends, appendlist, dctr)
-        else:
-            dscon = self.run_command('parseRecipeFile', fn, appends, appendlist)
-        if dscon:
-            return self._reconvert_type(dscon, 'DataStoreConnectionHandle')
-        else:
-            return None
+        if self.tracking:
+            # Enable history tracking just for the parse operation
+            self.run_command('enableDataTracking')
+        try:
+            if appends and appendlist == []:
+                appends = False
+            if config_data:
+                dctr = bb.remotedata.RemoteDatastores.transmit_datastore(config_data)
+                dscon = self.run_command('parseRecipeFile', fn, appends, appendlist, dctr)
+            else:
+                dscon = self.run_command('parseRecipeFile', fn, appends, appendlist)
+            if dscon:
+                return self._reconvert_type(dscon, 'DataStoreConnectionHandle')
+            else:
+                return None
+        finally:
+            if self.tracking:
+                self.run_command('disableDataTracking')
 
     def build_file(self, buildfile, task, internal=True):
         """
@@ -704,6 +714,9 @@ class Tinfoil:
                 eventmask.extend(extra_events)
             ret = self.set_event_mask(eventmask)
 
+        includelogs = self.config_data.getVar('BBINCLUDELOGS')
+        loglines = self.config_data.getVar('BBINCLUDELOGS_LINES')
+
         ret = self.run_command('buildTargets', targets, task)
         if handle_events:
             result = False
@@ -733,6 +746,10 @@ class Tinfoil:
                             if event_callback and event_callback(event):
                                 continue
                             if helper.eventHandler(event):
+                                if isinstance(event, bb.build.TaskFailedSilent):
+                                    logger.warning("Logfile for failed setscene task is %s" % event.logfile)
+                                elif isinstance(event, bb.build.TaskFailed):
+                                    bb.ui.knotty.print_event_log(event, includelogs, loglines, termfilter)
                                 continue
                             if isinstance(event, bb.event.ProcessStarted):
                                 if self.quiet > 1:
@@ -810,6 +827,12 @@ class Tinfoil:
             bb.event.ui_queue = []
             self.server_connection.terminate()
             self.server_connection = None
+
+        # Restore logging handlers to how it looked when we started
+        if self.oldhandlers:
+            for handler in self.logger.handlers:
+                if handler not in self.oldhandlers:
+                    self.logger.handlers.remove(handler)
 
     def _reconvert_type(self, obj, origtypename):
         """

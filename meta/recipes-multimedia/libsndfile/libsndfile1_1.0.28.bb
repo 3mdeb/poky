@@ -1,12 +1,22 @@
 SUMMARY = "Audio format Conversion library"
 HOMEPAGE = "http://www.mega-nerd.com/libsndfile"
 AUTHOR = "Erik de Castro Lopo"
-DEPENDS = "flac libogg libvorbis sqlite3"
+DEPENDS = "flac libogg libvorbis"
 SECTION = "libs/multimedia"
 LICENSE = "LGPLv2.1"
 
 SRC_URI = "http://www.mega-nerd.com/libsndfile/files/libsndfile-${PV}.tar.gz \
            file://CVE-2017-6892.patch \
+           file://CVE-2017-8361-8365.patch \
+           file://CVE-2017-8362.patch \
+           file://CVE-2017-8363.patch \
+           file://CVE-2017-14634.patch \
+           file://CVE-2018-13139.patch \
+           file://0001-a-ulaw-fix-multiple-buffer-overflows-432.patch \
+           file://CVE-2018-19432.patch \
+           file://CVE-2017-12562.patch \
+           file://CVE-2018-19758.patch \
+           file://CVE-2019-3832.patch \
           "
 
 SRC_URI[md5sum] = "646b5f98ce89ac60cdb060fcd398247c"
@@ -20,11 +30,6 @@ S = "${WORKDIR}/libsndfile-${PV}"
 
 PACKAGECONFIG ??= "${@bb.utils.filter('DISTRO_FEATURES', 'alsa', d)}"
 PACKAGECONFIG[alsa] = "--enable-alsa,--disable-alsa,alsa-lib"
+PACKAGECONFIG[regtest] = "--enable-sqlite,--disable-sqlite,sqlite3"
 
 inherit autotools lib_package pkgconfig
-
-do_configure_prepend_arm() {
-	export ac_cv_sys_largefile_source=1
-	export ac_cv_sys_file_offset_bits=64
-}
-

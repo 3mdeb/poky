@@ -1,6 +1,8 @@
+#
 # Copyright (c) 2013-2014 Intel Corporation
 #
-# Released under the MIT license (see COPYING.MIT)
+# SPDX-License-Identifier: MIT
+#
 
 # DESCRIPTION
 # This module is mainly used by scripts/oe-selftest and modules under meta/oeqa/selftest
@@ -146,6 +148,9 @@ class Command(object):
         # At this point we know that the process has closed stdout/stderr, so
         # it is safe and necessary to wait for the actual process completion.
         self.status = self.process.wait()
+        self.process.stdout.close()
+        if self.process.stderr:
+            self.process.stderr.close()
 
         self.log.debug("Command '%s' returned %d as exit code." % (self.cmd, self.status))
         # logging the complete output is insane
@@ -167,8 +172,11 @@ def runCmd(command, ignore_status=False, timeout=None, assert_error=True,
     if native_sysroot:
         extra_paths = "%s/sbin:%s/usr/sbin:%s/usr/bin" % \
                       (native_sysroot, native_sysroot, native_sysroot)
+        extra_libpaths = "%s/lib:%s/usr/lib" % \
+                         (native_sysroot, native_sysroot)
         nenv = dict(options.get('env', os.environ))
         nenv['PATH'] = extra_paths + ':' + nenv.get('PATH', '')
+        nenv['LD_LIBRARY_PATH'] = extra_libpaths + ':' + nenv.get('LD_LIBRARY_PATH', '')
         options['env'] = nenv
 
     cmd = Command(command, timeout=timeout, output_log=output_log, **options)
@@ -227,7 +235,7 @@ def get_bb_vars(variables=None, target=None, postconfig=None):
     bbenv = get_bb_env(target, postconfig=postconfig)
 
     if variables is not None:
-        variables = variables.copy()
+        variables = list(variables)
     var_re = re.compile(r'^(export )?(?P<var>\w+(_.*)?)="(?P<value>.*)"$')
     unset_re = re.compile(r'^unset (?P<var>\w+)$')
     lastline = None
@@ -285,7 +293,7 @@ def create_temp_layer(templayerdir, templayername, priority=999, recipepathspec=
         f.write('BBFILE_PATTERN_%s = "^${LAYERDIR}/"\n' % templayername)
         f.write('BBFILE_PRIORITY_%s = "%d"\n' % (templayername, priority))
         f.write('BBFILE_PATTERN_IGNORE_EMPTY_%s = "1"\n' % templayername)
-
+        f.write('LAYERSERIES_COMPAT_%s = "${LAYERSERIES_COMPAT_core}"\n' % templayername)
 
 @contextlib.contextmanager
 def runqemu(pn, ssh=True, runqemuparams='', image_fstype=None, launch_cmd=None, qemuparams=None, overrides={}, discard_writes=True):
@@ -295,6 +303,12 @@ def runqemu(pn, ssh=True, runqemuparams='', image_fstype=None, launch_cmd=None, 
 
     import bb.tinfoil
     import bb.build
+
+    # Need a non-'BitBake' logger to capture the runner output
+    targetlogger = logging.getLogger('TargetRunner')
+    targetlogger.setLevel(logging.DEBUG)
+    handler = logging.StreamHandler(sys.stdout)
+    targetlogger.addHandler(handler)
 
     tinfoil = bb.tinfoil.Tinfoil()
     tinfoil.prepare(config_only=False, quiet=True)
@@ -313,41 +327,30 @@ def runqemu(pn, ssh=True, runqemuparams='', image_fstype=None, launch_cmd=None, 
         for key, value in overrides.items():
             recipedata.setVar(key, value)
 
-        # The QemuRunner log is saved out, but we need to ensure it is at the right
-        # log level (and then ensure that since it's a child of the BitBake logger,
-        # we disable propagation so we don't then see the log events on the console)
-        logger = logging.getLogger('BitBake.QemuRunner')
-        logger.setLevel(logging.DEBUG)
-        logger.propagate = False
         logdir = recipedata.getVar("TEST_LOG_DIR")
 
-        qemu = oeqa.targetcontrol.QemuTarget(recipedata, image_fstype)
+        qemu = oeqa.targetcontrol.QemuTarget(recipedata, targetlogger, image_fstype)
     finally:
         # We need to shut down tinfoil early here in case we actually want
         # to run tinfoil-using utilities with the running QEMU instance.
         # Luckily QemuTarget doesn't need it after the constructor.
         tinfoil.shutdown()
 
-    # Setup bitbake logger as console handler is removed by tinfoil.shutdown
-    bblogger = logging.getLogger('BitBake')
-    bblogger.setLevel(logging.INFO)
-    console = logging.StreamHandler(sys.stdout)
-    bbformat = bb.msg.BBLogFormatter("%(levelname)s: %(message)s")
-    if sys.stdout.isatty():
-        bbformat.enable_color()
-    console.setFormatter(bbformat)
-    bblogger.addHandler(console)
-
     try:
         qemu.deploy()
         try:
             qemu.start(params=qemuparams, ssh=ssh, runqemuparams=runqemuparams, launch_cmd=launch_cmd, discard_writes=discard_writes)
-        except bb.build.FuncFailed:
-            raise Exception('Failed to start QEMU - see the logs in %s' % logdir)
+        except Exception as e:
+            msg = str(e) + '\nFailed to start QEMU - see the logs in %s' % logdir
+            if os.path.exists(qemu.qemurunnerlog):
+                with open(qemu.qemurunnerlog, 'r') as f:
+                    msg = msg + "Qemurunner log output from %s:\n%s" % (qemu.qemurunnerlog, f.read())
+            raise Exception(msg)
 
         yield qemu
 
     finally:
+        targetlogger.removeHandler(handler)
         try:
             qemu.stop()
         except:

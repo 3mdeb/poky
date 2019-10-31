@@ -1,6 +1,8 @@
+#
 # Copyright (C) 2015 Intel Corporation
 #
-# Released under the MIT license (see COPYING.MIT)
+# SPDX-License-Identifier: MIT
+#
 
 # This module provides a class for starting qemu images of poky tiny.
 # It's used by testimage.bbclass.
@@ -17,7 +19,7 @@ from .qemurunner import QemuRunner
 
 class QemuTinyRunner(QemuRunner):
 
-    def __init__(self, machine, rootfs, display, tmpdir, deploy_dir_image, logfile, kernel, boottime):
+    def __init__(self, machine, rootfs, display, tmpdir, deploy_dir_image, logfile, kernel, boottime, logger):
 
         # Popen object for runqemu
         self.runqemu = None
@@ -40,6 +42,7 @@ class QemuTinyRunner(QemuRunner):
         self.socketfile = "console.sock"
         self.server_socket = None
         self.kernel = kernel
+        self.logger = logger
 
 
     def create_socket(self):
@@ -107,7 +110,7 @@ class QemuTinyRunner(QemuRunner):
 
         return self.is_alive()
 
-    def run_serial(self, command, timeout=5):
+    def run_serial(self, command, timeout=60):
         self.server_socket.sendall(command+'\n')
         data = ''
         status = 0

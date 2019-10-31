@@ -1,3 +1,7 @@
+#
+# SPDX-License-Identifier: MIT
+#
+
 from oeqa.selftest.case import OESelftestTestCase
 from oeqa.utils.commands import runCmd
 from oeqa.utils import CommandError
@@ -23,8 +27,8 @@ class RunCmdTests(OESelftestTestCase):
 
     # The delta is intentionally smaller than the timeout, to detect cases where
     # we incorrectly apply the timeout more than once.
-    TIMEOUT = 2
-    DELTA = 1
+    TIMEOUT = 5
+    DELTA = 3
 
     def test_result_okay(self):
         result = runCmd("true")

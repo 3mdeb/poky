@@ -6,6 +6,8 @@ inherit package
 
 IMAGE_PKGTYPE ?= "deb"
 
+DPKG_BUILDCMD ??= "dpkg-deb"
+
 DPKG_ARCH ?= "${@debian_arch_map(d.getVar('TARGET_ARCH'), d.getVar('TUNE_FEATURES'))}"
 DPKG_ARCH[vardepvalue] = "${DPKG_ARCH}"
 
@@ -41,10 +43,6 @@ def debian_arch_map(arch, tune):
     return arch
 
 python do_package_deb () {
-    from multiprocessing import Process
-
-    oldcwd = os.getcwd()
-
     packages = d.getVar('PACKAGES')
     if not packages:
         bb.debug(1, "PACKAGES not defined, nothing to package")
@@ -54,22 +52,7 @@ python do_package_deb () {
     if os.access(os.path.join(tmpdir, "stamps", "DEB_PACKAGE_INDEX_CLEAN"),os.R_OK):
         os.unlink(os.path.join(tmpdir, "stamps", "DEB_PACKAGE_INDEX_CLEAN"))
 
-    max_process = int(d.getVar("BB_NUMBER_THREADS") or os.cpu_count() or 1)
-    launched = []
-    pkgs = packages.split()
-    while pkgs:
-        if len(launched) < max_process:
-            p = Process(target=deb_write_pkg, args=(pkgs.pop(), d))
-            p.start()
-            launched.append(p)
-        for q in launched:
-            # The finished processes are joined when calling is_alive()
-            if not q.is_alive():
-                launched.remove(q)
-    for p in launched:
-        p.join()
-
-    os.chdir(oldcwd)
+    oe.utils.multiprocess_launch(deb_write_pkg, packages.split(), d, extraargs=(d,))
 }
 do_package_deb[vardeps] += "deb_write_pkg"
 do_package_deb[vardepsexclude] = "BB_NUMBER_THREADS"
@@ -192,18 +175,19 @@ def deb_write_pkg(pkg, d):
         mapping_rename_hook(localdata)
 
         def debian_cmp_remap(var):
-            # dpkg does not allow for '(' or ')' in a dependency name
-            # replace these instances with '__' and '__'
+            # dpkg does not allow for '(', ')' or ':' in a dependency name
+            # Replace any instances of them with '__'
             #
             # In debian '>' and '<' do not mean what it appears they mean
             #   '<' = less or equal
             #   '>' = greater or equal
             # adjust these to the '<<' and '>>' equivalents
             #
-            for dep in var:
-                if '(' in dep:
-                    newdep = dep.replace('(', '__')
-                    newdep = newdep.replace(')', '__')
+            for dep in list(var.keys()):
+                if '(' in dep or '/' in dep:
+                    newdep = re.sub(r'[(:)/]', '__', dep)
+                    if newdep.startswith("__"):
+                        newdep = "A" + newdep
                     if newdep != dep:
                         var[newdep] = var[dep]
                         del var[dep]
@@ -287,7 +271,10 @@ def deb_write_pkg(pkg, d):
             conffiles.close()
 
         os.chdir(basedir)
-        subprocess.check_output("PATH=\"%s\" dpkg-deb -b %s %s" % (localdata.getVar("PATH"), root, pkgoutdir), shell=True)
+        subprocess.check_output("PATH=\"%s\" %s -b %s %s" % (localdata.getVar("PATH"), localdata.getVar("DPKG_BUILDCMD"),
+                                                             root, pkgoutdir),
+                                stderr=subprocess.STDOUT,
+                                shell=True)
 
     finally:
         cleanupcontrol(root)

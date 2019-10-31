@@ -1,4 +1,5 @@
 SUMMARY = "Security tool that is a wrapper for TCP daemons"
+HOMEPAGE = "http://www.softpanorama.org/Net/Network_security/TCP_wrappers/"
 DESCRIPTION = "Tools for monitoring and filtering incoming requests for tcp \
                services."
 SECTION = "console/network"
@@ -7,6 +8,7 @@ LICENSE = "BSD"
 LIC_FILES_CHKSUM = "file://DISCLAIMER;md5=071bd69cb78b18888ea5e3da5c3127fa"
 PR ="r10"
 
+DEPENDS += "libnsl2"
 
 PACKAGES = "${PN}-dbg libwrap libwrap-doc libwrap-dev libwrap-staticdev ${PN} ${PN}-doc"
 FILES_libwrap = "${base_libdir}/lib*${SOLIBS}"
@@ -16,7 +18,7 @@ FILES_libwrap-staticdev = "${libdir}/lib*.a"
 FILES_${PN} = "${sbindir}"
 FILES_${PN}-doc = "${mandir}/man8"
 
-SRC_URI = "ftp://ftp.porcupine.org/pub/security/tcp_wrappers_${PV}.tar.gz \
+SRC_URI = "http://ftp.porcupine.org/pub/security/tcp_wrappers_${PV}.tar.gz \
            file://00_man_quoting.diff \
            file://01_man_portability.patch \
            file://05_wildcard_matching.patch \
@@ -44,6 +46,9 @@ SRC_URI = "ftp://ftp.porcupine.org/pub/security/tcp_wrappers_${PV}.tar.gz \
            file://safe_finger.8 \
            file://makefile-fix-parallel.patch \
            file://musl-decls.patch \
+           file://0001-Fix-build-with-clang.patch \
+           file://fix_warnings.patch \
+           file://fix_warnings2.patch \
            "
 
 SRC_URI[md5sum] = "e6fa25f71226d090f34de3f6b122fb5a"
@@ -65,7 +70,6 @@ EXTRA_OEMAKE = "'CC=${CC}' \
                 'KILL_OPT=-DKILL_IP_OPTIONS' \
                 'UMASK=-DDAEMON_UMASK=022' \
                 'NETGROUP=${EXTRA_OEMAKE_NETGROUP}' \
-                'LIBS=-lnsl' \
                 'ARFLAGS=rv' \
                 'AUX_OBJ=weak_symbols.o' \
                 'TLI=' \

@@ -17,11 +17,15 @@ function importLayerPageInit (ctx) {
   var currentLayerDepSelection;
   var validLayerName = /^(\w|-)+$/;
 
+  /* Catch 'disable' race condition between type-ahead started and "input change" */
+  var typeAheadStarted = 0;
+
   libtoaster.makeTypeahead(layerDepInput,
                            libtoaster.ctx.layersTypeAheadUrl,
                            { include_added: "true" }, function(item){
     currentLayerDepSelection = item;
     layerDepBtn.removeAttr("disabled");
+    typeAheadStarted = 1;
   });
 
   layerDepInput.on("typeahead:select", function(event, data){
@@ -34,7 +38,10 @@ function importLayerPageInit (ctx) {
   // disable the "Add layer" button when the layer input typeahead is empty
   // or not in the typeahead choices
   layerDepInput.on("input change", function(){
-    layerDepBtn.attr("disabled","disabled");
+    if (0 == typeAheadStarted) {
+      layerDepBtn.attr("disabled","disabled");
+    }
+    typeAheadStarted = 0;
   });
 
   /* We automatically add "openembedded-core" layer for convenience as a
@@ -50,6 +57,7 @@ function importLayerPageInit (ctx) {
   });
 
   layerDepBtn.click(function(){
+    typeAheadStarted = 0;
     if (currentLayerDepSelection == undefined)
       return;
 
@@ -77,7 +85,7 @@ function importLayerPageInit (ctx) {
 
     $("#layer-deps-list").append(newLayerDep);
 
-    libtoaster.getLayerDepsForProject(currentLayerDepSelection.layerdetailurl,
+    libtoaster.getLayerDepsForProject(currentLayerDepSelection.xhrLayerUrl,
                                       function (data){
         /* These are the dependencies of the layer added as a dependency */
         if (data.list.length > 0) {
@@ -176,6 +184,8 @@ function importLayerPageInit (ctx) {
           success: function (data) {
             if (data.error != "ok") {
               console.log(data.error);
+              /* let the user know why nothing happened */
+              alert(data.error)
             } else {
               createImportedNotification(data);
               window.location.replace(libtoaster.ctx.projectPageUrl);
@@ -244,9 +254,18 @@ function importLayerPageInit (ctx) {
         enable_import_btn(true);
       }
 
-      if ($("#git-repo-radio").prop("checked") &&
-          vcsURLInput.val().length > 0 && gitRefInput.val().length > 0) {
-        enable_import_btn(true);
+      if ($("#git-repo-radio").prop("checked")) {
+        if (gitRefInput.val().length > 0 &&
+            gitRefInput.val() == 'HEAD') {
+          $('#invalid-layer-revision-hint').show();
+          $('#layer-revision-ctrl').addClass('has-error');
+          enable_import_btn(false);
+        } else if (vcsURLInput.val().length > 0 &&
+                   gitRefInput.val().length > 0) {
+          $('#invalid-layer-revision-hint').hide();
+          $('#layer-revision-ctrl').removeClass('has-error');
+          enable_import_btn(true);
+        }
       }
     }
 
@@ -407,7 +426,7 @@ function importLayerPageInit (ctx) {
       var input = $(this);
       var reBeginWithSlash = /^\//;
       var reCheckVariable = /^\$/;
-      var re = /([ <>\\|":\.%\?\*]+)/;
+      var re = /([ <>\\|":%\?\*]+)/;
 
       var invalidDir = re.test(input.val());
       var invalidSlash = reBeginWithSlash.test(input.val());

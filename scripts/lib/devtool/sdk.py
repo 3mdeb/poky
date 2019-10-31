@@ -2,18 +2,8 @@
 #
 # Copyright (C) 2015-2016 Intel Corporation
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 import os
 import subprocess
@@ -145,6 +135,9 @@ def sdk_update(args, config, basepath, workspace):
         # Fetch manifest from server
         tmpmanifest = os.path.join(tmpsdk_dir, 'conf', 'sdk-conf-manifest')
         ret = subprocess.call("wget -q -O %s %s/conf/sdk-conf-manifest" % (tmpmanifest, updateserver), shell=True)
+        if ret != 0:
+            logger.error("Cannot dowload files from %s" % updateserver)
+            return ret
         changedfiles = check_manifest(tmpmanifest, basepath)
         if not changedfiles:
             logger.info("Already up-to-date")
@@ -155,7 +148,7 @@ def sdk_update(args, config, basepath, workspace):
         if os.path.exists(os.path.join(basepath, 'layers/.git')):
             out = subprocess.check_output("git status --porcelain", shell=True, cwd=layers_dir)
             if not out:
-                ret = subprocess.call("git fetch --all; git reset --hard", shell=True, cwd=layers_dir)
+                ret = subprocess.call("git fetch --all; git reset --hard @{u}", shell=True, cwd=layers_dir)
             else:
                 logger.error("Failed to update metadata as there have been changes made to it. Aborting.");
                 logger.error("Changed files:\n%s" % out);

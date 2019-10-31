@@ -1,8 +1,15 @@
+#
+# SPDX-License-Identifier: MIT
+#
+
 from oeqa.selftest.case import OESelftestTestCase
 from oeqa.utils.commands import runCmd, bitbake, get_bb_var, get_bb_vars, runqemu
-from oeqa.core.decorator.oeid import OETestID
+from oeqa.utils.sshcontrol import SSHControl
 import os
 import re
+import tempfile
+import shutil
+import oe.lsb
 
 class TestExport(OESelftestTestCase):
 
@@ -11,7 +18,6 @@ class TestExport(OESelftestTestCase):
         runCmd("rm -rf /tmp/sdk")
         super(TestExport, cls).tearDownClass()
 
-    @OETestID(1499)
     def test_testexport_basic(self):
         """
         Summary: Check basic testexport functionality with only ping test enabled.
@@ -51,7 +57,6 @@ class TestExport(OESelftestTestCase):
             # Verify ping test was succesful
             self.assertEqual(0, result.status, 'oe-test runtime returned a non 0 status')
 
-    @OETestID(1641)
     def test_testexport_sdk(self):
         """
         Summary: Check sdk functionality for testexport.
@@ -106,7 +111,6 @@ class TestExport(OESelftestTestCase):
 
 class TestImage(OESelftestTestCase):
 
-    @OETestID(1644)
     def test_testimage_install(self):
         """
         Summary: Check install packages functionality for testimage/testexport.
@@ -119,6 +123,7 @@ class TestImage(OESelftestTestCase):
             self.skipTest('core-image-full-cmdline not buildable for poky-tiny')
 
         features = 'INHERIT += "testimage"\n'
+        features += 'IMAGE_INSTALL_append = " libssl"\n'
         features += 'TEST_SUITES = "ping ssh selftest"\n'
         self.write_config(features)
 
@@ -126,82 +131,105 @@ class TestImage(OESelftestTestCase):
         bitbake('core-image-full-cmdline socat')
         bitbake('-c testimage core-image-full-cmdline')
 
-    @OETestID(1883)
     def test_testimage_dnf(self):
         """
         Summary: Check package feeds functionality for dnf
         Expected: 1. Check that remote package feeds can be accessed
         Product: oe-core
-        Author: Alexander Kanavin <alexander.kanavin@intel.com>
+        Author: Alexander Kanavin <alex.kanavin@gmail.com>
         """
         if get_bb_var('DISTRO') == 'poky-tiny':
             self.skipTest('core-image-full-cmdline not buildable for poky-tiny')
 
         features = 'INHERIT += "testimage"\n'
-        features += 'TEST_SUITES = "ping ssh dnf-runtime"\n'
+        features += 'TEST_SUITES = "ping ssh dnf_runtime dnf.DnfBasicTest.test_dnf_help"\n'
         # We don't yet know what the server ip and port will be - they will be patched
         # in at the start of the on-image test
         features += 'PACKAGE_FEED_URIS = "http://bogus_ip:bogus_port"\n'
         features += 'EXTRA_IMAGE_FEATURES += "package-management"\n'
-        features += 'PACKAGE_CLASSES = "package_rpm"'
+        features += 'PACKAGE_CLASSES = "package_rpm"\n'
+
+        bitbake('gnupg-native -c addto_recipe_sysroot')
+
+        # Enable package feed signing
+        self.gpg_home = tempfile.mkdtemp(prefix="oeqa-feed-sign-")
+        self.track_for_cleanup(self.gpg_home)
+        signing_key_dir = os.path.join(self.testlayer_path, 'files', 'signing')
+        runCmd('gpg --batch --homedir %s --import %s' % (self.gpg_home, os.path.join(signing_key_dir, 'key.secret')), native_sysroot=get_bb_var("RECIPE_SYSROOT_NATIVE", "gnupg-native"))
+        features += 'INHERIT += "sign_package_feed"\n'
+        features += 'PACKAGE_FEED_GPG_NAME = "testuser"\n'
+        features += 'PACKAGE_FEED_GPG_PASSPHRASE_FILE = "%s"\n' % os.path.join(signing_key_dir, 'key.passphrase')
+        features += 'GPG_PATH = "%s"\n' % self.gpg_home
         self.write_config(features)
 
         # Build core-image-sato and testimage
         bitbake('core-image-full-cmdline socat')
         bitbake('-c testimage core-image-full-cmdline')
 
-class Postinst(OESelftestTestCase):
-    @OETestID(1540)
-    def test_verify_postinst(self):
+    def test_testimage_virgl_gtk(self):
         """
-        Summary: The purpose of this test is to verify the execution order of postinst Bugzilla ID: [5319]
-        Expected :
-        1. Compile a minimal image.
-        2. The compiled image will add the created layer with the recipes postinst[ abdpt]
-        3. Run qemux86
-        4. Validate the task execution order
-        Author: Francisco Pedraza <francisco.j.pedraza.gonzalez@intel.com>
+        Summary: Check host-assisted accelerate OpenGL functionality in qemu with gtk frontend
+        Expected: 1. Check that virgl kernel driver is loaded and 3d acceleration is enabled
+                  2. Check that kmscube demo runs without crashing.
+        Product: oe-core
+        Author: Alexander Kanavin <alex.kanavin@gmail.com>
         """
+        if "DISPLAY" not in os.environ:
+            self.skipTest("virgl gtk test must be run inside a X session")
+        distro = oe.lsb.distro_identifier()
+        if distro and distro == 'debian-8':
+            self.skipTest('virgl isn\'t working with Debian 8')
+
+        qemu_packageconfig = get_bb_var('PACKAGECONFIG', 'qemu-system-native')
         features = 'INHERIT += "testimage"\n'
-        features += 'CORE_IMAGE_EXTRA_INSTALL += "postinst-at-rootfs \
-postinst-delayed-a \
-postinst-delayed-b \
-postinst-delayed-d \
-postinst-delayed-p \
-postinst-delayed-t \
-"\n'
+        if 'gtk+' not in qemu_packageconfig:
+            features += 'PACKAGECONFIG_append_pn-qemu-system-native = " gtk+"\n'
+        if 'virglrenderer' not in qemu_packageconfig:
+            features += 'PACKAGECONFIG_append_pn-qemu-system-native = " virglrenderer"\n'
+        if 'glx' not in qemu_packageconfig:
+            features += 'PACKAGECONFIG_append_pn-qemu-system-native = " glx"\n'
+        features += 'TEST_SUITES = "ping ssh virgl"\n'
+        features += 'IMAGE_FEATURES_append = " ssh-server-dropbear"\n'
+        features += 'IMAGE_INSTALL_append = " kmscube"\n'
+        features += 'TEST_RUNQEMUPARAMS = "gtk gl"\n'
         self.write_config(features)
+        bitbake('core-image-minimal')
+        bitbake('-c testimage core-image-minimal')
 
-        bitbake('core-image-minimal -f ')
+    def test_testimage_virgl_headless(self):
+        """
+        Summary: Check host-assisted accelerate OpenGL functionality in qemu with egl-headless frontend
+        Expected: 1. Check that virgl kernel driver is loaded and 3d acceleration is enabled
+                  2. Check that kmscube demo runs without crashing.
+        Product: oe-core
+        Author: Alexander Kanavin <alex.kanavin@gmail.com>
+        """
+        import subprocess, os
+        try:
+            content = os.listdir("/dev/dri")
+            if len([i for i in content if i.startswith('render')]) == 0:
+                self.skipTest("No render nodes found in /dev/dri: %s" %(content))
+        except FileNotFoundError:
+            self.skipTest("/dev/dri directory does not exist; no render nodes available on this machine.")
+        try:
+            dripath = subprocess.check_output("pkg-config --variable=dridriverdir dri", shell=True)
+        except subprocess.CalledProcessError as e:
+            self.skipTest("Could not determine the path to dri drivers on the host via pkg-config.\nPlease install Mesa development files (particularly, dri.pc) on the host machine.")
+        qemu_packageconfig = get_bb_var('PACKAGECONFIG', 'qemu-system-native')
+        features = 'INHERIT += "testimage"\n'
+        if 'virglrenderer' not in qemu_packageconfig:
+            features += 'PACKAGECONFIG_append_pn-qemu-system-native = " virglrenderer"\n'
+        if 'glx' not in qemu_packageconfig:
+            features += 'PACKAGECONFIG_append_pn-qemu-system-native = " glx"\n'
+        features += 'TEST_SUITES = "ping ssh virgl"\n'
+        features += 'IMAGE_FEATURES_append = " ssh-server-dropbear"\n'
+        features += 'IMAGE_INSTALL_append = " kmscube"\n'
+        features += 'TEST_RUNQEMUPARAMS = "egl-headless"\n'
+        self.write_config(features)
+        bitbake('core-image-minimal')
+        bitbake('-c testimage core-image-minimal')
 
-        postinst_list = ['100-postinst-at-rootfs',
-                         '101-postinst-delayed-a',
-                         '102-postinst-delayed-b',
-                         '103-postinst-delayed-d',
-                         '104-postinst-delayed-p',
-                         '105-postinst-delayed-t']
-        path_workdir = get_bb_var('WORKDIR','core-image-minimal')
-        workspacedir = 'testimage/qemu_boot_log'
-        workspacedir = os.path.join(path_workdir, workspacedir)
-        rexp = re.compile("^Running postinst .*/(?P<postinst>.*)\.\.\.$")
-        with runqemu('core-image-minimal') as qemu:
-            with open(workspacedir) as f:
-                found = False
-                idx = 0
-                for line in f.readlines():
-                    line = line.strip().replace("^M","")
-                    if not line: # To avoid empty lines
-                        continue
-                    m = rexp.search(line)
-                    if m:
-                        self.assertEqual(postinst_list[idx], m.group('postinst'), "Fail")
-                        idx = idx+1
-                        found = True
-                    elif found:
-                        self.assertEqual(idx, len(postinst_list), "Not found all postinsts")
-                        break
-
-    @OETestID(1545)
+class Postinst(OESelftestTestCase):
     def test_postinst_rootfs_and_boot(self):
         """
         Summary:        The purpose of this test case is to verify Post-installation
@@ -219,41 +247,76 @@ postinst-delayed-t \
                         for initialization managers: sysvinit and systemd.
 
         """
-        file_rootfs_name = "this-was-created-at-rootfstime"
-        fileboot_name = "this-was-created-at-first-boot"
-        rootfs_pkg = 'postinst-at-rootfs'
-        boot_pkg = 'postinst-delayed-a'
-        #Step 1
-        common_features = 'MACHINE = "qemux86"\n'
-        common_features += 'CORE_IMAGE_EXTRA_INSTALL += "%s %s "\n'% (rootfs_pkg, boot_pkg)
-        common_features += 'IMAGE_FEATURES += "ssh-server-openssh"\n'
+
+        import oe.path
+
+        vars = get_bb_vars(("IMAGE_ROOTFS", "sysconfdir"), "core-image-minimal")
+        rootfs = vars["IMAGE_ROOTFS"]
+        self.assertIsNotNone(rootfs)
+        sysconfdir = vars["sysconfdir"]
+        self.assertIsNotNone(sysconfdir)
+        # Need to use oe.path here as sysconfdir starts with /
+        hosttestdir = oe.path.join(rootfs, sysconfdir, "postinst-test")
+        targettestdir = os.path.join(sysconfdir, "postinst-test")
+
         for init_manager in ("sysvinit", "systemd"):
-            #for sysvinit no extra configuration is needed,
-            features = ''
-            if (init_manager is "systemd"):
-                features += 'DISTRO_FEATURES_append = " systemd"\n'
-                features += 'VIRTUAL-RUNTIME_init_manager = "systemd"\n'
-                features += 'DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"\n'
-                features += 'VIRTUAL-RUNTIME_initscripts = ""\n'
-            for classes in ("package_rpm package_deb package_ipk",
-                            "package_deb package_rpm package_ipk",
-                            "package_ipk package_deb package_rpm"):
+            for classes in ("package_rpm", "package_deb", "package_ipk"):
+                with self.subTest(init_manager=init_manager, package_class=classes):
+                    features = 'CORE_IMAGE_EXTRA_INSTALL = "postinst-delayed-b"\n'
+                    features += 'IMAGE_FEATURES += "package-management empty-root-password"\n'
+                    features += 'PACKAGE_CLASSES = "%s"\n' % classes
+                    if init_manager == "systemd":
+                        features += 'DISTRO_FEATURES_append = " systemd"\n'
+                        features += 'VIRTUAL-RUNTIME_init_manager = "systemd"\n'
+                        features += 'DISTRO_FEATURES_BACKFILL_CONSIDERED = "sysvinit"\n'
+                        features += 'VIRTUAL-RUNTIME_initscripts = ""\n'
+                    self.write_config(features)
+
+                    bitbake('core-image-minimal')
+
+                    self.assertTrue(os.path.isfile(os.path.join(hosttestdir, "rootfs")),
+                                    "rootfs state file was not created")
+
+                    with runqemu('core-image-minimal') as qemu:
+                        # Make the test echo a string and search for that as
+                        # run_serial()'s status code is useless.'
+                        for filename in ("rootfs", "delayed-a", "delayed-b"):
+                            status, output = qemu.run_serial("test -f %s && echo found" % os.path.join(targettestdir, filename))
+                            self.assertEqual(output, "found", "%s was not present on boot" % filename)
+
+
+
+    def test_failing_postinst(self):
+        """
+        Summary:        The purpose of this test case is to verify that post-installation
+                        scripts that contain errors are properly reported.
+        Expected:       The scriptlet failure is properly reported.
+                        The file that is created after the error in the scriptlet is not present.
+        Product: oe-core
+        Author: Alexander Kanavin <alex.kanavin@gmail.com>
+        """
+
+        import oe.path
+
+        vars = get_bb_vars(("IMAGE_ROOTFS", "sysconfdir"), "core-image-minimal")
+        rootfs = vars["IMAGE_ROOTFS"]
+        self.assertIsNotNone(rootfs)
+        sysconfdir = vars["sysconfdir"]
+        self.assertIsNotNone(sysconfdir)
+        # Need to use oe.path here as sysconfdir starts with /
+        hosttestdir = oe.path.join(rootfs, sysconfdir, "postinst-test")
+
+        for classes in ("package_rpm", "package_deb", "package_ipk"):
+            with self.subTest(package_class=classes):
+                features = 'CORE_IMAGE_EXTRA_INSTALL = "postinst-rootfs-failing"\n'
                 features += 'PACKAGE_CLASSES = "%s"\n' % classes
-                self.write_config(common_features + features)
+                self.write_config(features)
+                bb_result = bitbake('core-image-minimal', ignore_status=True)
+                self.assertGreaterEqual(bb_result.output.find("Postinstall scriptlets of ['postinst-rootfs-failing'] have failed."), 0,
+                    "Warning about a failed scriptlet not found in bitbake output: %s" %(bb_result.output))
 
-                #Step 2
-                bitbake('core-image-minimal')
+                self.assertTrue(os.path.isfile(os.path.join(hosttestdir, "rootfs-before-failure")),
+                                    "rootfs-before-failure file was not created")
+                self.assertFalse(os.path.isfile(os.path.join(hosttestdir, "rootfs-after-failure")),
+                                    "rootfs-after-failure file was created")
 
-                #Step 3
-                file_rootfs_created = os.path.join(get_bb_var('IMAGE_ROOTFS',"core-image-minimal"),
-                                                   file_rootfs_name)
-                found = os.path.isfile(file_rootfs_created)
-                self.assertTrue(found, "File %s was not created at rootfs time by %s" % \
-                                (file_rootfs_name, rootfs_pkg))
-
-                #Step 4
-                testcommand = 'ls /etc/'+fileboot_name
-                with runqemu('core-image-minimal') as qemu:
-                    sshargs = '-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no'
-                    result = runCmd('ssh %s root@%s %s' % (sshargs, qemu.ip, testcommand))
-                    self.assertEqual(result.status, 0, 'File %s was not created at firts boot'% fileboot_name)

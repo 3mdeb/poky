@@ -1,21 +1,7 @@
-# ex:ts=4:sw=4:sts=4:et
-# -*- tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
 #
 # Copyright (c) 2013, Intel Corporation.
-# All rights reserved.
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # DESCRIPTION
 # This module provides a place to collect various wic-related utils
@@ -43,6 +29,9 @@ NATIVE_RECIPES = {"bmaptool": "bmap-tools",
                   "grub-mkimage": "grub-efi",
                   "isohybrid": "syslinux",
                   "mcopy": "mtools",
+                  "mdel" : "mtools",
+                  "mdeltree" : "mtools",
+                  "mdir" : "mtools",
                   "mkdosfs": "dosfstools",
                   "mkisofs": "cdrtools",
                   "mkfs.btrfs": "btrfs-tools",
@@ -52,7 +41,7 @@ NATIVE_RECIPES = {"bmaptool": "bmap-tools",
                   "mkfs.vfat": "dosfstools",
                   "mksquashfs": "squashfs-tools",
                   "mkswap": "util-linux",
-                  "mmd": "syslinux",
+                  "mmd": "mtools",
                   "parted": "parted",
                   "sfdisk": "util-linux",
                   "sgdisk": "gptfdisk",
@@ -183,7 +172,7 @@ class BitbakeVars(defaultdict):
         self.default_image = None
         self.vars_dir = None
 
-    def _parse_line(self, line, image, matcher=re.compile(r"^(\w+)=(.+)")):
+    def _parse_line(self, line, image, matcher=re.compile(r"^([a-zA-Z0-9\-_+./~]+)=(.*)")):
         """
         Parse one line from bitbake -e output or from .env file.
         Put result key-value pair into the storage.

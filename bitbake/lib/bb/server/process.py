@@ -3,18 +3,8 @@
 #
 # Copyright (C) 2010 Bob Foerster <robert@erafx.com>
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 """
     This module implements a multiprocessing.Process based server for bitbake.
@@ -33,6 +23,8 @@ import select
 import socket
 import subprocess
 import errno
+import re
+import datetime
 import bb.server.xmlrpcserver
 from bb import daemonize
 from multiprocessing import queues
@@ -128,25 +120,57 @@ class ProcessServer(multiprocessing.Process):
         bb.utils.set_process_name("Cooker")
 
         ready = []
+        newconnections = []
 
         self.controllersock = False
         fds = [self.sock]
         if self.xmlrpc:
             fds.append(self.xmlrpc)
         print("Entering server connection loop")
+
+        def disconnect_client(self, fds):
+            print("Disconnecting Client")
+            if self.controllersock:
+                fds.remove(self.controllersock)
+                self.controllersock.close()
+                self.controllersock = False
+            if self.haveui:
+                fds.remove(self.command_channel)
+                bb.event.unregister_UIHhandler(self.event_handle, True)
+                self.command_channel_reply.writer.close()
+                self.event_writer.writer.close()
+                self.command_channel.close()
+                self.command_channel = False
+                del self.event_writer
+                self.lastui = time.time()
+                self.cooker.clientComplete()
+                self.haveui = False
+            ready = select.select(fds,[],[],0)[0]
+            if newconnections:
+                print("Starting new client")
+                conn = newconnections.pop(-1)
+                fds.append(conn)
+                self.controllersock = conn
+            elif self.timeout is None and not ready:
+                print("No timeout, exiting.")
+                self.quit = True
+
         while not self.quit:
             if self.sock in ready:
-                self.controllersock, address = self.sock.accept()
-                if self.haveui:
-                    print("Dropping connection attempt as we have a UI %s" % (str(ready)))
-                    self.controllersock.close()
-                else:
-                    print("Accepting %s" % (str(ready)))
-                    fds.append(self.controllersock)
+                while select.select([self.sock],[],[],0)[0]:
+                    controllersock, address = self.sock.accept()
+                    if self.controllersock:
+                        print("Queuing %s (%s)" % (str(ready), str(newconnections)))
+                        newconnections.append(controllersock)
+                    else:
+                        print("Accepting %s (%s)" % (str(ready), str(newconnections)))
+                        self.controllersock = controllersock
+                        fds.append(controllersock)
             if self.controllersock in ready:
                 try:
-                    print("Connecting Client")
+                    print("Processing Client")
                     ui_fds = recvfds(self.controllersock, 3)
+                    print("Connecting Client")
 
                     # Where to write events to
                     writer = ConnectionWriter(ui_fds[0])
@@ -164,22 +188,11 @@ class ProcessServer(multiprocessing.Process):
 
                     self.haveui = True
 
-                except EOFError:
-                    print("Disconnecting Client")
-                    fds.remove(self.controllersock)
-                    fds.remove(self.command_channel)
-                    bb.event.unregister_UIHhandler(self.event_handle, True)
-                    self.command_channel_reply.writer.close()
-                    self.event_writer.writer.close()
-                    del self.event_writer
-                    self.controllersock.close()
-                    self.haveui = False
-                    self.lastui = time.time()
-                    self.cooker.clientComplete()
-                    if self.timeout is None:
-                        print("No timeout, exiting.")
-                        self.quit = True
-            if not self.haveui and self.lastui and self.timeout and (self.lastui + self.timeout) < time.time():
+                except (EOFError, OSError):
+                    disconnect_client(self, fds)
+
+            if not self.timeout == -1.0 and not self.haveui and self.lastui and self.timeout and \
+                    (self.lastui + self.timeout) < time.time():
                 print("Server timeout, exiting.")
                 self.quit = True
 
@@ -188,6 +201,8 @@ class ProcessServer(multiprocessing.Process):
                     command = self.command_channel.get()
                 except EOFError:
                     # Client connection shutting down
+                    ready = []
+                    disconnect_client(self, fds)
                     continue
                 if command[0] == "terminateServer":
                     self.quit = True
@@ -204,16 +219,18 @@ class ProcessServer(multiprocessing.Process):
             ready = self.idle_commands(.1, fds)
 
         print("Exiting")
+        # Remove the socket file so we don't get any more connections to avoid races
+        os.unlink(self.sockname)
+        self.sock.close()
+
         try: 
             self.cooker.shutdown(True)
+            self.cooker.notifier.stop()
+            self.cooker.confignotifier.stop()
         except:
             pass
 
         self.cooker.post_serve()
-
-        # Remove the socket file so we don't get any more connections to avoid races
-        os.unlink(self.sockname)
-        self.sock.close()
 
         # Finally release the lockfile but warn about other processes holding it open
         lock = self.bitbake_lock
@@ -224,6 +241,12 @@ class ProcessServer(multiprocessing.Process):
         while not lock:
             with bb.utils.timeout(3):
                 lock = bb.utils.lockfile(lockfile, shared=False, retry=False, block=True)
+                if lock:
+                    # We hold the lock so we can remove the file (hide stale pid data)
+                    bb.utils.remove(lockfile)
+                    bb.utils.unlockfile(lock)
+                    return
+
                 if not lock:
                     # Some systems may not have lsof available
                     procs = None
@@ -244,10 +267,6 @@ class ProcessServer(multiprocessing.Process):
                     if procs:
                         msg += ":\n%s" % str(procs)
                     print(msg)
-                    return
-        # We hold the lock so we can remove the file (hide stale pid data)
-        bb.utils.remove(lockfile)
-        bb.utils.unlockfile(lock)
 
     def idle_commands(self, delay, fds=None):
         nextsleep = delay
@@ -301,7 +320,7 @@ class ProcessServer(multiprocessing.Process):
                 # Ignore EINTR
                 return []
         else:
-            return []
+            return select.select(fds,[],[],0)[0]
 
 
 class ServerCommunicator():
@@ -311,7 +330,7 @@ class ServerCommunicator():
 
     def runCommand(self, command):
         self.connection.send(command)
-        if not self.recv.poll(5):
+        if not self.recv.poll(30):
             raise ProcessTimeout("Timeout while waiting for a reply from the bitbake server")
         return self.recv.get()
 
@@ -347,6 +366,9 @@ class BitBakeProcessServerConnection(object):
         return
 
 class BitBakeServer(object):
+    start_log_format = '--- Starting bitbake server pid %s at %s ---'
+    start_log_datetime_format = '%Y-%m-%d %H:%M:%S.%f'
+
     def __init__(self, lock, sockname, configuration, featureset):
 
         self.configuration = configuration
@@ -359,11 +381,12 @@ class BitBakeServer(object):
         if os.path.exists(sockname):
             os.unlink(sockname)
 
+        # Place the log in the builddirectory alongside the lock file
+        logfile = os.path.join(os.path.dirname(self.bitbake_lock.name), "bitbake-cookerdaemon.log")
+
         self.sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         # AF_UNIX has path length issues so chdir here to workaround
         cwd = os.getcwd()
-        logfile = os.path.join(cwd, "bitbake-cookerdaemon.log")
-
         try:
             os.chdir(os.path.dirname(sockname))
             self.sock.bind(os.path.basename(sockname))
@@ -372,39 +395,79 @@ class BitBakeServer(object):
         self.sock.listen(1)
 
         os.set_inheritable(self.sock.fileno(), True)
+        startdatetime = datetime.datetime.now()
         bb.daemonize.createDaemon(self._startServer, logfile)
         self.sock.close()
         self.bitbake_lock.close()
-
-        ready = ConnectionReader(self.readypipe)
-        r = ready.wait(8)
-        if not r:
-            ready.close()
-            bb.error("Unable to start bitbake server")
-            if os.path.exists(logfile):
-                with open(logfile, "r") as f:
-                    logs=f.readlines()
-                bb.error("Last 10 lines of server log %s:\n%s" % (logfile, "".join(logs[-10:])))
-            raise SystemExit(1)
-        ready.close()
         os.close(self.readypipein)
 
+        ready = ConnectionReader(self.readypipe)
+        r = ready.poll(5)
+        if not r:
+            bb.note("Bitbake server didn't start within 5 seconds, waiting for 90")
+            r = ready.poll(90)
+        if r:
+            try:
+                r = ready.get()
+            except EOFError:
+                # Trap the child exitting/closing the pipe and error out
+                r = None
+        if not r or r[0] != "r":
+            ready.close()
+            bb.error("Unable to start bitbake server (%s)" % str(r))
+            if os.path.exists(logfile):
+                logstart_re = re.compile(self.start_log_format % ('([0-9]+)', '([0-9-]+ [0-9:.]+)'))
+                started = False
+                lines = []
+                lastlines = []
+                with open(logfile, "r") as f:
+                    for line in f:
+                        if started:
+                            lines.append(line)
+                        else:
+                            lastlines.append(line)
+                            res = logstart_re.match(line.rstrip())
+                            if res:
+                                ldatetime = datetime.datetime.strptime(res.group(2), self.start_log_datetime_format)
+                                if ldatetime >= startdatetime:
+                                    started = True
+                                    lines.append(line)
+                        if len(lastlines) > 60:
+                            lastlines = lastlines[-60:]
+                if lines:
+                    if len(lines) > 60:
+                        bb.error("Last 60 lines of server log for this session (%s):\n%s" % (logfile, "".join(lines[-60:])))
+                    else:
+                        bb.error("Server log for this session (%s):\n%s" % (logfile, "".join(lines)))
+                elif lastlines:
+                        bb.error("Server didn't start, last 60 loglines (%s):\n%s" % (logfile, "".join(lastlines)))
+            else:
+                bb.error("%s doesn't exist" % logfile)
+
+            raise SystemExit(1)
+
+        ready.close()
+
     def _startServer(self):
-        print("Starting bitbake server pid %d" % os.getpid())
+        print(self.start_log_format % (os.getpid(), datetime.datetime.now().strftime(self.start_log_datetime_format)))
+        sys.stdout.flush()
+
         server = ProcessServer(self.bitbake_lock, self.sock, self.sockname)
         self.configuration.setServerRegIdleCallback(server.register_idle_function)
-
-        # Copy prefile and postfile to _server variants
-        for param in ('prefile', 'postfile'):
-            value = getattr(self.configuration, param)
-            if value:
-                setattr(self.configuration, "%s_server" % param, value)
-
-        self.cooker = bb.cooker.BBCooker(self.configuration, self.featureset, self.readypipein)
+        os.close(self.readypipe)
+        writer = ConnectionWriter(self.readypipein)
+        try:
+            self.cooker = bb.cooker.BBCooker(self.configuration, self.featureset)
+        except bb.BBHandledException:
+            return None
+        writer.send("r")
+        writer.close()
         server.cooker = self.cooker
         server.server_timeout = self.configuration.server_timeout
         server.xmlrpcinterface = self.configuration.xmlrpcinterface
         print("Started bitbake server pid %d" % os.getpid())
+        sys.stdout.flush()
+
         server.start()
 
 def connectProcessServer(sockname, featureset):
@@ -413,16 +476,25 @@ def connectProcessServer(sockname, featureset):
     # AF_UNIX has path length issues so chdir here to workaround
     cwd = os.getcwd()
 
-    try:
-        os.chdir(os.path.dirname(sockname))
-        sock.connect(os.path.basename(sockname))
-    finally:
-        os.chdir(cwd)
-
     readfd = writefd = readfd1 = writefd1 = readfd2 = writefd2 = None
     eq = command_chan_recv = command_chan = None
 
+    sock.settimeout(10)
+
     try:
+        try:
+            os.chdir(os.path.dirname(sockname))
+            finished = False
+            while not finished:
+                try:
+                    sock.connect(os.path.basename(sockname))
+                    finished = True
+                except IOError as e:
+                    if e.errno == errno.EWOULDBLOCK:
+                        pass
+                    raise
+        finally:
+            os.chdir(cwd)
 
         # Send an fd for the remote to write events to
         readfd, writefd = os.pipe()
@@ -451,7 +523,8 @@ def connectProcessServer(sockname, featureset):
             command_chan.close()
         for i in [writefd, readfd1, writefd2]:
             try:
-                os.close(i)
+                if i:
+                    os.close(i)
             except OSError:
                 pass
         sock.close()

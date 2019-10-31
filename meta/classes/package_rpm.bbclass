@@ -7,9 +7,27 @@ RPMBUILD="rpmbuild"
 
 PKGWRITEDIRRPM = "${WORKDIR}/deploy-rpms"
 
-# Maintaining the perfile dependencies has singificant overhead when writing the 
+# Maintaining the perfile dependencies has singificant overhead when writing the
 # packages. When set, this value merges them for efficiency.
 MERGEPERFILEDEPS = "1"
+
+# Filter dependencies based on a provided function.
+def filter_deps(var, f):
+    import collections
+
+    depends_dict = bb.utils.explode_dep_versions2(var)
+    newdeps_dict = collections.OrderedDict()
+    for dep in depends_dict:
+        if f(dep):
+            newdeps_dict[dep] = depends_dict[dep]
+    return bb.utils.join_deps(newdeps_dict, commasep=False)
+
+# Filter out absolute paths (typically /bin/sh and /usr/bin/env) and any perl
+# dependencies for nativesdk packages.
+def filter_nativesdk_deps(srcname, var):
+    if var and srcname.startswith("nativesdk-"):
+        var = filter_deps(var, lambda dep: not dep.startswith('/') and dep != 'perl' and not dep.startswith('perl('))
+    return var
 
 # Construct per file dependencies file
 def write_rpm_perfiledata(srcname, d):
@@ -18,7 +36,7 @@ def write_rpm_perfiledata(srcname, d):
     pkgd = d.getVar('PKGD')
 
     def dump_filerdeps(varname, outfile, d):
-        outfile.write("#!/usr/bin/env python\n\n")
+        outfile.write("#!/usr/bin/env python3\n\n")
         outfile.write("# Dependency table\n")
         outfile.write('deps = {\n')
         for pkg in packages.split():
@@ -26,7 +44,8 @@ def write_rpm_perfiledata(srcname, d):
             dependsflist = (d.getVar(dependsflist_key) or "")
             for dfile in dependsflist.split():
                 key = "FILE" + varname + "_" + dfile + "_" + pkg
-                depends_dict = bb.utils.explode_dep_versions(d.getVar(key) or "")
+                deps = filter_nativesdk_deps(srcname, d.getVar(key) or "")
+                depends_dict = bb.utils.explode_dep_versions(deps)
                 file = dfile.replace("@underscore@", "_")
                 file = file.replace("@closebrace@", "]")
                 file = file.replace("@openbrace@", "[")
@@ -94,6 +113,10 @@ python write_specfile () {
             source_list = os.listdir(ar_outdir)
             source_number = 0
             for source in source_list:
+                # do_deploy_archives may have already run (from sstate) meaning a .src.rpm may already 
+                # exist in ARCHIVER_OUTDIR so skip if present.
+                if source.endswith(".src.rpm"):
+                    continue
                 # The rpmbuild doesn't need the root permission, but it needs
                 # to know the file's user and group name, the only user and
                 # group in fakeroot is "root" when working in fakeroot.
@@ -359,8 +382,16 @@ python write_specfile () {
             splitrdepends = splitrdepends + " " + get_perfile('RDEPENDS', pkg, d)
             splitrprovides = splitrprovides + " " + get_perfile('RPROVIDES', pkg, d)
 
+        splitrdepends = filter_nativesdk_deps(srcname, splitrdepends)
+
         # Gather special src/first package data
         if srcname == splitname:
+            archiving = d.getVarFlag('ARCHIVER_MODE', 'srpm') == '1' and \
+                        bb.data.inherits_class('archiver', d)
+            if archiving and srclicense != splitlicense:
+                bb.warn("The SRPM produced may not have the correct overall source license in the License tag. This is due to the LICENSE for the primary package and SRPM conflicting.")
+
+            srclicense     = splitlicense
             srcrdepends    = splitrdepends
             srcrrecommends = splitrrecommends
             srcrsuggests   = splitrsuggests
@@ -378,7 +409,6 @@ python write_specfile () {
             if not file_list and localdata.getVar('ALLOW_EMPTY', False) != "1":
                 bb.note("Not creating empty RPM package for %s" % splitname)
             else:
-                bb.note("Creating RPM package for %s" % splitname)
                 spec_files_top.append('%files')
                 if extra_pkgdata:
                     package_rpm_extra_pkgdata(splitname, spec_files_top, localdata)
@@ -387,7 +417,7 @@ python write_specfile () {
                     bb.note("Creating RPM package for %s" % splitname)
                     spec_files_top.extend(file_list)
                 else:
-                    bb.note("Creating EMPTY RPM Package for %s" % splitname)
+                    bb.note("Creating empty RPM package for %s" % splitname)
                 spec_files_top.append('')
             continue
 
@@ -400,8 +430,7 @@ python write_specfile () {
             spec_preamble_bottom.append('Release: %s' % splitrelease)
         if srcepoch != splitepoch:
             spec_preamble_bottom.append('Epoch: %s' % splitepoch)
-        if srclicense != splitlicense:
-            spec_preamble_bottom.append('License: %s' % splitlicense)
+        spec_preamble_bottom.append('License: %s' % splitlicense)
         spec_preamble_bottom.append('Group: %s' % splitsection)
 
         if srccustomtagschunk != splitcustomtagschunk:
@@ -480,7 +509,7 @@ python write_specfile () {
                 bb.note("Creating RPM package for %s" % splitname)
                 spec_files_bottom.extend(file_list)
             else:
-                bb.note("Creating EMPTY RPM Package for %s" % splitname)
+                bb.note("Creating empty RPM package for %s" % splitname)
             spec_files_bottom.append('')
 
         del localdata
@@ -625,9 +654,13 @@ python do_package_rpm () {
     rpmbuild = d.getVar('RPMBUILD')
     targetsys = d.getVar('TARGET_SYS')
     targetvendor = d.getVar('HOST_VENDOR')
+
     # Too many places in dnf stack assume that arch-independent packages are "noarch".
     # Let's not fight against this.
-    package_arch = (d.getVar('PACKAGE_ARCH') or "").replace("-", "_").replace("all", "noarch")
+    package_arch = (d.getVar('PACKAGE_ARCH') or "").replace("-", "_")
+    if package_arch == "all":
+        package_arch = "noarch"
+
     sdkpkgsuffix = (d.getVar('SDKPKGSUFFIX') or "nativesdk").replace("-", "_")
     d.setVar('PACKAGE_ARCH_EXTEND', package_arch)
     pkgwritedir = d.expand('${PKGWRITEDIRRPM}/${PACKAGE_ARCH_EXTEND}')
@@ -640,13 +673,15 @@ python do_package_rpm () {
     cmd = rpmbuild
     cmd = cmd + " --noclean --nodeps --short-circuit --target " + pkgarch + " --buildroot " + pkgd
     cmd = cmd + " --define '_topdir " + workdir + "' --define '_rpmdir " + pkgwritedir + "'"
-    cmd = cmd + " --define '_builddir " + d.getVar('S') + "'"
+    cmd = cmd + " --define '_builddir " + d.getVar('B') + "'"
     cmd = cmd + " --define '_build_name_fmt %%{NAME}-%%{VERSION}-%%{RELEASE}.%%{ARCH}.rpm'"
     cmd = cmd + " --define '_use_internal_dependency_generator 0'"
     cmd = cmd + " --define '_binaries_in_noarch_packages_terminate_build 0'"
     cmd = cmd + " --define '_build_id_links none'"
     cmd = cmd + " --define '_binary_payload w6T.xzdio'"
     cmd = cmd + " --define '_source_payload w6T.xzdio'"
+    cmd = cmd + " --define 'clamp_mtime_to_source_date_epoch 1'"
+    cmd = cmd + " --define '_buildhost reproducible'"
     if perfiledeps:
         cmd = cmd + " --define '__find_requires " + outdepends + "'"
         cmd = cmd + " --define '__find_provides " + outprovides + "'"
@@ -658,7 +693,7 @@ python do_package_rpm () {
     cmd = cmd + " --define '_tmppath " + workdir + "'"
     if d.getVarFlag('ARCHIVER_MODE', 'srpm') == '1' and bb.data.inherits_class('archiver', d):
         cmd = cmd + " --define '_sourcedir " + d.getVar('ARCHIVER_OUTDIR') + "'"
-        cmdsrpm = cmd + " --define '_srcrpmdir " + d.getVar('ARCHIVER_OUTDIR') + "'"
+        cmdsrpm = cmd + " --define '_srcrpmdir " + d.getVar('ARCHIVER_RPMOUTDIR') + "'"
         cmdsrpm = cmdsrpm + " -bs " + outspecfile
         # Build the .src.rpm
         d.setVar('SBUILDSPEC', cmdsrpm + "\n")

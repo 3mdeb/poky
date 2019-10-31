@@ -1,3 +1,1 @@
-# Specify rng device
-#RNG_DEVICE=/dev/hwrng
-RNG_DEVICE=/dev/urandom
+EXTRA_ARGS="-r /dev/hwrng"

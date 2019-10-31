@@ -1,16 +1,19 @@
+#
+# SPDX-License-Identifier: MIT
+#
+
 import os
 import re
 import time
+import logging
 import bb.tinfoil
 
 from oeqa.selftest.case import OESelftestTestCase
 from oeqa.utils.commands import runCmd
-from oeqa.core.decorator.oeid import OETestID
 
 class TinfoilTests(OESelftestTestCase):
     """ Basic tests for the tinfoil API """
 
-    @OETestID(1568)
     def test_getvar(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(True)
@@ -18,7 +21,6 @@ class TinfoilTests(OESelftestTestCase):
             if not machine:
                 self.fail('Unable to get MACHINE value - returned %s' % machine)
 
-    @OETestID(1569)
     def test_expand(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(True)
@@ -27,7 +29,6 @@ class TinfoilTests(OESelftestTestCase):
             if not pid:
                 self.fail('Unable to expand "%s" - returned %s' % (expr, pid))
 
-    @OETestID(1570)
     def test_getvar_bb_origenv(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(True)
@@ -36,7 +37,6 @@ class TinfoilTests(OESelftestTestCase):
                 self.fail('Unable to get BB_ORIGENV value - returned %s' % origenv)
             self.assertEqual(origenv.getVar('HOME', False), os.environ['HOME'])
 
-    @OETestID(1571)
     def test_parse_recipe(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(config_only=False, quiet=2)
@@ -47,7 +47,6 @@ class TinfoilTests(OESelftestTestCase):
             rd = tinfoil.parse_recipe_file(best[3])
             self.assertEqual(testrecipe, rd.getVar('PN'))
 
-    @OETestID(1572)
     def test_parse_recipe_copy_expand(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(config_only=False, quiet=2)
@@ -66,7 +65,6 @@ class TinfoilTests(OESelftestTestCase):
             localdata.setVar('PN', 'hello')
             self.assertEqual('hello', localdata.getVar('BPN'))
 
-    @OETestID(1573)
     def test_parse_recipe_initial_datastore(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(config_only=False, quiet=2)
@@ -80,7 +78,6 @@ class TinfoilTests(OESelftestTestCase):
             # Check we can get variable values
             self.assertEqual('somevalue', rd.getVar('MYVARIABLE'))
 
-    @OETestID(1574)
     def test_list_recipes(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(config_only=False, quiet=2)
@@ -99,7 +96,6 @@ class TinfoilTests(OESelftestTestCase):
             if checkpns:
                 self.fail('Unable to find pkg_fn entries for: %s' % ', '.join(checkpns))
 
-    @OETestID(1575)
     def test_wait_event(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(config_only=True)
@@ -127,13 +123,14 @@ class TinfoilTests(OESelftestTestCase):
                         self.assertEqual(pattern, event._pattern)
                         self.assertIn('qemuarm.conf', event._matches)
                         eventreceived = True
+                    elif isinstance(event, logging.LogRecord):
+                        continue
                     else:
                         self.fail('Unexpected event: %s' % event)
 
             self.assertTrue(commandcomplete, 'Timed out waiting for CommandCompleted event from bitbake server')
             self.assertTrue(eventreceived, 'Did not receive FilesMatchingFound event from bitbake server')
 
-    @OETestID(1576)
     def test_setvariable_clean(self):
         # First check that setVariable affects the datastore
         with bb.tinfoil.Tinfoil() as tinfoil:
@@ -156,7 +153,6 @@ class TinfoilTests(OESelftestTestCase):
             value = tinfoil.run_command('getVariable', 'TESTVAR')
             self.assertEqual(value, 'specialvalue', 'Value set using config_data.setVar() is not reflected in config_data.getVar()')
 
-    @OETestID(1884)
     def test_datastore_operations(self):
         with bb.tinfoil.Tinfoil() as tinfoil:
             tinfoil.prepare(config_only=True)
@@ -192,3 +188,37 @@ class TinfoilTests(OESelftestTestCase):
             tinfoil.config_data.appendVar('OVERRIDES', ':overrideone')
             value = tinfoil.config_data.getVar('TESTVAR')
             self.assertEqual(value, 'one', 'Variable overrides not functioning correctly')
+
+    def test_variable_history(self):
+        # Basic test to ensure that variable history works when tracking=True
+        with bb.tinfoil.Tinfoil(tracking=True) as tinfoil:
+            tinfoil.prepare(config_only=False, quiet=2)
+            # Note that _tracking for any datastore we get will be
+            # false here, that's currently expected - so we can't check
+            # for that
+            history = tinfoil.config_data.varhistory.variable('DL_DIR')
+            for entry in history:
+                if entry['file'].endswith('/bitbake.conf'):
+                    if entry['op'] in ['set', 'set?']:
+                        break
+            else:
+                self.fail('Did not find history entry setting DL_DIR in bitbake.conf. History: %s' % history)
+            # Check it works for recipes as well
+            testrecipe = 'zlib'
+            rd = tinfoil.parse_recipe(testrecipe)
+            history = rd.varhistory.variable('LICENSE')
+            bbfound = -1
+            recipefound = -1
+            for i, entry in enumerate(history):
+                if entry['file'].endswith('/bitbake.conf'):
+                    if entry['detail'] == 'INVALID' and entry['op'] in ['set', 'set?']:
+                        bbfound = i
+                elif entry['file'].endswith('.bb'):
+                    if entry['op'] == 'set':
+                        recipefound = i
+            if bbfound == -1:
+                self.fail('Did not find history entry setting LICENSE in bitbake.conf parsing %s recipe. History: %s' % (testrecipe, history))
+            if recipefound == -1:
+                self.fail('Did not find history entry setting LICENSE in %s recipe. History: %s' % (testrecipe, history))
+            if bbfound > recipefound:
+                self.fail('History entry setting LICENSE in %s recipe and in bitbake.conf in wrong order. History: %s' % (testrecipe, history))

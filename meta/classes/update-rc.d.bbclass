@@ -20,24 +20,9 @@ def use_updatercd(d):
         return '[ -n "$D" -o ! -d /run/systemd/system ]'
     return 'true'
 
-updatercd_preinst() {
-if ${@use_updatercd(d)} && [ -z "$D" -a -f "${INIT_D_DIR}/${INITSCRIPT_NAME}" ]; then
-	${INIT_D_DIR}/${INITSCRIPT_NAME} stop || :
-fi
-if ${@use_updatercd(d)} && type update-rc.d >/dev/null 2>/dev/null; then
-	if [ -n "$D" ]; then
-		OPT="-f -r $D"
-	else
-		OPT="-f"
-	fi
-	update-rc.d $OPT ${INITSCRIPT_NAME} remove
-fi
-}
-
 PACKAGE_WRITE_DEPS += "update-rc.d-native"
 
 updatercd_postinst() {
-# Begin section update-rc.d
 if ${@use_updatercd(d)} && type update-rc.d >/dev/null 2>/dev/null; then
 	if [ -n "$D" ]; then
 		OPT="-r $D"
@@ -46,15 +31,12 @@ if ${@use_updatercd(d)} && type update-rc.d >/dev/null 2>/dev/null; then
 	fi
 	update-rc.d $OPT ${INITSCRIPT_NAME} ${INITSCRIPT_PARAMS}
 fi
-# End section update-rc.d
 }
 
 updatercd_prerm() {
-# Begin section update-rc.d
 if ${@use_updatercd(d)} && [ -z "$D" -a -x "${INIT_D_DIR}/${INITSCRIPT_NAME}" ]; then
 	${INIT_D_DIR}/${INITSCRIPT_NAME} stop || :
 fi
-# End section update-rc.d
 }
 
 updatercd_postrm() {
@@ -83,7 +65,7 @@ python __anonymous() {
 PACKAGESPLITFUNCS_prepend = "${@bb.utils.contains('DISTRO_FEATURES', 'sysvinit', 'populate_packages_updatercd ', '', d)}"
 PACKAGESPLITFUNCS_remove_class-nativesdk = "populate_packages_updatercd "
 
-populate_packages_updatercd[vardeps] += "updatercd_prerm updatercd_postrm updatercd_preinst updatercd_postinst"
+populate_packages_updatercd[vardeps] += "updatercd_prerm updatercd_postrm updatercd_postinst"
 populate_packages_updatercd[vardepsexclude] += "OVERRIDES"
 
 python populate_packages_updatercd () {
@@ -96,10 +78,10 @@ python populate_packages_updatercd () {
         statement = "grep -q -w '/etc/init.d/functions' %s" % path
         if subprocess.call(statement, shell=True) == 0:
             mlprefix = d.getVar('MLPREFIX') or ""
-            d.appendVar('RDEPENDS_' + pkg, ' %sinitscripts-functions' % (mlprefix))
+            d.appendVar('RDEPENDS_' + pkg, ' %sinitd-functions' % (mlprefix))
 
     def update_rcd_package(pkg):
-        bb.debug(1, 'adding update-rc.d calls to preinst/postinst/prerm/postrm for %s' % pkg)
+        bb.debug(1, 'adding update-rc.d calls to postinst/prerm/postrm for %s' % pkg)
 
         localdata = bb.data.createCopy(d)
         overrides = localdata.getVar("OVERRIDES")
@@ -107,34 +89,16 @@ python populate_packages_updatercd () {
 
         update_rcd_auto_depend(pkg)
 
-        preinst = d.getVar('pkg_preinst_%s' % pkg)
-        if not preinst:
-            preinst = '#!/bin/sh\n'
-        preinst += localdata.getVar('updatercd_preinst')
-        d.setVar('pkg_preinst_%s' % pkg, preinst)
-
         postinst = d.getVar('pkg_postinst_%s' % pkg)
         if not postinst:
             postinst = '#!/bin/sh\n'
-        postinst = postinst.splitlines(True)
-        try:
-            index = postinst.index('# End section update-alternatives\n')
-            postinst.insert(index + 1, localdata.getVar('updatercd_postinst'))
-        except ValueError:
-            postinst.append(localdata.getVar('updatercd_postinst'))
-        postinst = ''.join(postinst)
+        postinst += localdata.getVar('updatercd_postinst')
         d.setVar('pkg_postinst_%s' % pkg, postinst)
 
         prerm = d.getVar('pkg_prerm_%s' % pkg)
         if not prerm:
             prerm = '#!/bin/sh\n'
-        prerm = prerm.splitlines(True)
-        try:
-            index = prerm.index('# Begin section update-alternatives\n')
-            prerm.insert(index, localdata.getVar('updatercd_prerm'))
-        except ValueError:
-            prerm.append(localdata.getVar('updatercd_prerm'))
-        prerm = ''.join(prerm)
+        prerm += localdata.getVar('updatercd_prerm')
         d.setVar('pkg_prerm_%s' % pkg, prerm)
 
         postrm = d.getVar('pkg_postrm_%s' % pkg)

@@ -4,18 +4,8 @@
 # Copyright (C) 2007        Ross Burton
 # Copyright (C) 2007 - 2008 Richard Purdie
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 
 import sys
 import gi
@@ -63,7 +53,9 @@ class PackageReverseDepView(Gtk.TreeView):
         self.current = None
         self.filter_model = model.filter_new()
         self.filter_model.set_visible_func(self._filter)
-        self.set_model(self.filter_model)
+        self.sort_model = self.filter_model.sort_new_with_model()
+        self.sort_model.set_sort_column_id(COL_DEP_PARENT, Gtk.SortType.ASCENDING)
+        self.set_model(self.sort_model)
         self.append_column(Gtk.TreeViewColumn(label, Gtk.CellRendererText(), text=COL_DEP_PARENT))
 
     def _filter(self, model, iter, data):
@@ -101,8 +93,15 @@ class DepExplorer(Gtk.Window):
         self.pkg_treeview.get_selection().connect("changed", self.on_cursor_changed)
         column = Gtk.TreeViewColumn("Package", Gtk.CellRendererText(), text=COL_PKG_NAME)
         self.pkg_treeview.append_column(column)
-        pane.add1(scrolled)
         scrolled.add(self.pkg_treeview)
+
+        self.search_entry = Gtk.SearchEntry.new()
+        self.pkg_treeview.set_search_entry(self.search_entry)
+
+        left_panel = Gtk.VPaned()
+        left_panel.add(self.search_entry)
+        left_panel.add(scrolled)
+        pane.add1(left_panel)
 
         box = Gtk.VBox(homogeneous=True, spacing=4)
 
@@ -127,6 +126,7 @@ class DepExplorer(Gtk.Window):
         pane.add2(box)
 
         self.show_all()
+        self.search_entry.grab_focus()
 
     def on_package_activated(self, treeview, path, column, data_col):
         model = treeview.get_model()

@@ -11,12 +11,15 @@
     <para>
         Regardless of how you intend to make use of the Yocto Project,
         chances are you will work with the Linux kernel.
-        This manual introduces the kernel development process and
+        This manual describes how to set up your build host to support
+        kernel development, introduces the kernel development process,
         provides background information on the Yocto Linux kernel
         <ulink url='&YOCTO_DOCS_REF_URL;#metadata'>Metadata</ulink>,
         describes common tasks you can perform using the kernel tools,
-        and shows you how to use the kernel Metadata needed to work with
-        the kernel inside the Yocto Project.
+        shows you how to use the kernel Metadata needed to work with
+        the kernel inside the Yocto Project, and provides insight into how
+        the Yocto Project team develops and maintains Yocto Linux kernel
+        Git repositories and Metadata.
    </para>
 
    <para>
@@ -31,9 +34,13 @@
         Previous recipes in the release are refreshed and supported for at
         least one additional Yocto Project release.
         As they align, these previous releases are updated to include the
-        latest from the
-        <ulink url='&YOCTO_HOME_URL;/organization/long-term-support-initiative-ltsi'>Long Term Support Initiative</ulink>
-        (LTSI) project.
+        latest from the Long Term Support Initiative (LTSI) project.
+        You can learn more about Yocto Linux kernels and LTSI in the
+        "<link linkend='kernel-big-picture'>Yocto Project Kernel Development and Maintenance</link>"
+        section.
+    </para>
+
+    <para>
         Also included is a Yocto Linux kernel development recipe
         (<filename>linux-yocto-dev.bb</filename>) should you want to work
         with the very latest in upstream Yocto Linux kernel development and
@@ -88,6 +95,42 @@
         recipes, an alternative exists by which you can use the Yocto
         Project Linux kernel tools with your own kernel sources.
     </para>
+
+    <para>
+        The remainder of this manual provides instructions for completing
+        specific Linux kernel development tasks.
+        These instructions assume you are comfortable working with
+        <ulink url='http://openembedded.org/wiki/Bitbake'>BitBake</ulink>
+        recipes and basic open-source development tools.
+        Understanding these concepts will facilitate the process of working
+        with the kernel recipes.
+        If you find you need some additional background, please be sure to
+        review and understand the following documentation:
+        <itemizedlist>
+            <listitem><para>
+                <ulink url='&YOCTO_DOCS_BRIEF_URL;'>Yocto Project Quick Build</ulink>
+                document.
+                </para></listitem>
+            <listitem><para>
+                <ulink url='&YOCTO_DOCS_OM_URL;'>Yocto Project Overview and Concepts Manual</ulink>.
+                </para></listitem>
+            <listitem><para>
+                <ulink url='&YOCTO_DOCS_SDK_URL;#using-devtool-in-your-sdk-workflow'><filename>devtool</filename> workflow</ulink>
+                as described in the Yocto Project Application Development and
+                the Extensible Software Development Kit (eSDK) manual.
+                </para></listitem>
+            <listitem><para>
+                The
+                "<ulink url='&YOCTO_DOCS_DEV_URL;#understanding-and-creating-layers'>Understanding and Creating Layers</ulink>"
+                section in the Yocto Project Development Tasks Manual.
+                </para></listitem>
+            <listitem><para>
+                The
+                "<link linkend='kernel-modification-workflow'>Kernel Modification Workflow</link>"
+                section.
+                </para></listitem>
+        </itemizedlist>
+    </para>
 </section>
 
 <section id='kernel-modification-workflow'>
@@ -105,93 +148,72 @@
     <para>
         This section presents a high-level overview of the Yocto Project
         kernel modification workflow.
-        You can find additional information here:
-        <itemizedlist>
-            <listitem><para>
-                "<ulink url='&YOCTO_DOCS_DEV_URL;#patching-the-kernel'>Patching the Kernel</ulink>"
-                in the Yocto Project Development Manual.
-                </para></listitem>
-            <listitem><para>
-                "<ulink url='&YOCTO_DOCS_DEV_URL;#configuring-the-kernel'>Configuring the Kernel</ulink>"
-                in the Yocto Project Development Manual.
-                </para></listitem>
-        </itemizedlist>
-        This illustration and the following list summarizes the kernel
-        modification general workflow.
+        The illustration and accompanying list provide general information
+        and references for further information.
         <imagedata fileref="figures/kernel-dev-flow.png"
-            width="6in" depth="5in" align="center" scalefit="1" />
+            width="9in" depth="5in" align="center" scalefit="1" />
     </para>
 
     <para>
         <orderedlist>
             <listitem><para>
+
+
                 <emphasis>Set up Your Host Development System to Support
                 Development Using the Yocto Project</emphasis>:
-                See
-                "<ulink url='&YOCTO_DOCS_QS_URL;#the-linux-distro'>The Linux Distribution</ulink>"
-                and
-                "<ulink url='&YOCTO_DOCS_QS_URL;#packages'>The Build Host Packages</ulink>"
-                sections both in the Yocto Project Quick Start for
-                requirements.
+                See the
+                "<ulink url='&YOCTO_DOCS_DEV_URL;#dev-manual-start'>Setting Up the Development Host to Use the Yocto Project</ulink>"
+                section in the Yocto Project Development Tasks Manual for
+                options on how to get a build host ready to use the Yocto
+                Project.
                 </para></listitem>
             <listitem><para>
-                <emphasis>Clone the <filename>poky</filename> Repository</emphasis>:
-                Having the
-                <ulink url='&YOCTO_DOCS_REF_URL;#source-directory'>Source Directory</ulink>
-                on your system gives you access to the build process and tools
-                you need.
-                For information on how to get these files, see the
-                "<ulink url='&YOCTO_DOCS_DEV_URL;#cloning-the-poky-repository'>Cloning the <filename>poky</filename> Repository</ulink>"
-                section in the Yocto Project Development Manual.
-                </para></listitem>
-            <listitem><para>
-                <emphasis>Establish the Temporary Kernel Source Files</emphasis>:
-                Temporary kernel source files are kept in the
-                <ulink url='&YOCTO_DOCS_REF_URL;#build-directory'>Build Directory</ulink>
-                created by the OpenEmbedded build system when you run BitBake.
-                If you have never built the kernel in which you are
-                interested, you need to run an initial build to
-                establish local kernel source files.</para>
+                <emphasis>Set Up Your Host Development System for Kernel Development:</emphasis>
+                It is recommended that you use <filename>devtool</filename>
+                and an extensible SDK for kernel development.
+                Alternatively, you can use traditional kernel development
+                methods with the Yocto Project.
+                Either way, there are steps you need to take to get the
+                development environment ready.</para>
 
-                <para>If you are building an image for the first time, you
-                need to get the build environment ready by sourcing an
-                environment setup script
-                (i.e. <filename>oe-init-build-env</filename> or
-                <filename>oe-init-build-env-memres</filename>).
-                You also need to be sure two key configuration files
-                (<filename>local.conf</filename> and
-                <filename>bblayers.conf</filename>) are configured
-                appropriately.</para>
+                <para>Using <filename>devtool</filename> and the eSDK requires
+                that you have a clean build of the image and that you are
+                set up with the appropriate eSDK.
+                For more information, see the
+                "<link linkend='getting-ready-to-develop-using-devtool'>Getting Ready to Develop Using <filename>devtool</filename></link>"
+                section.</para>
 
-                <para>The entire process for building an image is overviewed
-                in the
-                "<ulink url='&YOCTO_DOCS_QS_URL;#qs-building-images'>Building Images</ulink>"
-                section of the Yocto Project Quick Start.
-                You might want to reference this information.
-                You can find more information on BitBake in the
-                <ulink url='&YOCTO_DOCS_BB_URL;'>BitBake User Manual</ulink>.
-                </para>
-
-                <para>The build process supports several types of images to
-                satisfy different needs.
-                See the "<ulink url='&YOCTO_DOCS_REF_URL;#ref-images'>Images</ulink>"
-                chapter in the Yocto Project Reference Manual for information
-                on supported images.
+                <para>Using traditional kernel development requires that you
+                have the kernel source available in an isolated local Git
+                repository.
+                For more information, see the
+                "<link linkend='getting-ready-for-traditional-kernel-development'>Getting Ready for Traditional Kernel Development</link>"
+                section.
                 </para></listitem>
             <listitem><para>
                 <emphasis>Make Changes to the Kernel Source Code if
-                applicable</emphasis>:
+                applicable:</emphasis>
                 Modifying the kernel does not always mean directly
                 changing source files.
                 However, if you have to do this, you make the changes to the
-                files in the Build Directory.
+                files in the eSDK's Build Directory if you are using
+                <filename>devtool</filename>.
+                For more information, see the
+                "<link linkend='using-devtool-to-patch-the-kernel'>Using <filename>devtool</filename> to Patch the Kernel</link>"
+                section.</para>
+
+                <para>If you are using traditional kernel development, you
+                edit the source files in the kernel's local Git repository.
+                For more information, see the
+                "<link linkend='using-traditional-kernel-development-to-patch-the-kernel'>Using Traditional Kernel Development to Patch the Kernel</link>"
+                section.
                 </para></listitem>
             <listitem><para>
                 <emphasis>Make Kernel Configuration Changes if
-                Applicable</emphasis>:
+                Applicable:</emphasis>
                 If your situation calls for changing the kernel's
                 configuration, you can use
-                <link linkend='generating-configuration-files'><filename>menuconfig</filename></link>,
+                <link linkend='using-menuconfig'><filename>menuconfig</filename></link>,
                 which allows you to interactively develop and test the
                 configuration changes you are making to the kernel.
                 Saving changes you make with <filename>menuconfig</filename>
@@ -200,10 +222,7 @@
                     Try to resist the temptation to directly edit an
                     existing <filename>.config</filename> file, which is
                     found in the Build Directory among the source code
-                    used for the build (e.g. see the workflow illustration
-                    in the
-                    "<link linkend='kernel-modification-workflow'>Kernel Modification Workflow</link>"
-                    section).
+                    used for the build.
                     Doing so, can produce unexpected results when the
                     OpenEmbedded build system regenerates the configuration
                     file.
@@ -213,71 +232,24 @@
                 and you have saved them, you can directly compare the
                 resulting <filename>.config</filename> file against an
                 existing original and gather those changes into a
-                <ulink url='&YOCTO_DOCS_DEV_URL;#creating-config-fragments'>configuration fragment file</ulink>
+                <link linkend='creating-config-fragments'>configuration fragment file</link>
                 to be referenced from within the kernel's
                 <filename>.bbappend</filename> file.</para>
 
                 <para>Additionally, if you are working in a BSP layer
                 and need to modify the BSP's kernel's configuration,
-                you can use the
-                <ulink url='&YOCTO_DOCS_BSP_URL;#managing-kernel-patches-and-config-items-with-yocto-kernel'><filename>yocto-kernel</filename></ulink>
-                script as well as <filename>menuconfig</filename>.
-                The <filename>yocto-kernel</filename> script lets
-                you interactively set up kernel configurations.
+                you can use <filename>menuconfig</filename>.
                 </para></listitem>
             <listitem><para>
-                <emphasis>Rebuild the Kernel Image With Your Changes</emphasis>:
+                <emphasis>Rebuild the Kernel Image With Your Changes:</emphasis>
                 Rebuilding the kernel image applies your changes.
+                Depending on your target hardware, you can verify your changes
+                on actual hardware or perhaps QEMU.
                 </para></listitem>
         </orderedlist>
-    </para>
-</section>
-
-<section id='kernel-dev-other-resources'>
-    <title>Other Resources</title>
-
-    <para>
-        The remainder of this manual provides instructions for completing
-        specific Linux kernel development tasks.
-        These instructions assume you are comfortable working with
-        <ulink url='http://openembedded.org/wiki/Bitbake'>BitBake</ulink>
-        recipes and basic open-source development tools.
-        Understanding these concepts will facilitate the process of working
-        with the kernel recipes.
-        If you find you need some additional background, please be sure to
-        review and understand the following documentation:
-        <itemizedlist>
-            <listitem><para>
-                <ulink url='&YOCTO_DOCS_QS_URL;'>Yocto Project Quick Start</ulink>
-                </para></listitem>
-            <listitem><para>
-                <ulink url='&YOCTO_DOCS_SDK_URL;#using-devtool-in-your-sdk-workflow'><filename>devtool</filename> workflow</ulink>
-                as described in the Yocto Project Software Development Kit
-                (SDK) Developer's Guide.
-                </para></listitem>
-            <listitem><para>
-                The
-                "<ulink url='&YOCTO_DOCS_DEV_URL;#understanding-and-creating-layers'>Understanding and Creating Layers</ulink>" section
-                in the Yocto Project Development Manual
-                </para></listitem>
-            <listitem><para>
-                The
-                "<link linkend='kernel-modification-workflow'>Kernel Modification Workflow</link>"
-                section.
-                </para></listitem>
-        </itemizedlist>
-    </para>
-
-    <para>
-        Finally, while this document focuses on the manual creation of
-        recipes, patches, and configuration files, the Yocto Project
-        Board Support Package (BSP) tools are available to automate
-        this process with existing content and work well to create the
-        initial framework and boilerplate code.
-        For details on these tools, see the
-        "<ulink url='&YOCTO_DOCS_BSP_URL;#using-the-yocto-projects-bsp-tools'>Using the Yocto Project's BSP Tools</ulink>"
-        section in the Yocto Project Board Support Package (BSP) Developer's
-        Guide.
+        The remainder of this developer's guide covers common tasks typically
+        used during kernel development, advanced Metadata usage, and Yocto Linux
+        kernel maintenance concepts.
     </para>
 </section>
 

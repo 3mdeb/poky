@@ -3,14 +3,15 @@ DESCRIPTION = "An image containing the build system that you can boot and run us
 HOMEPAGE = "http://www.yoctoproject.org/documentation/build-appliance"
 
 LICENSE = "MIT"
-LIC_FILES_CHKSUM = "file://${COREBASE}/LICENSE;md5=4d92cd373abda3937c2bc47fbc49d690 \
-                    file://${COREBASE}/meta/COPYING.MIT;md5=3da9cfbcb788c80a0384361b4de20420"
+LIC_FILES_CHKSUM = "file://${COREBASE}/meta/COPYING.MIT;md5=3da9cfbcb788c80a0384361b4de20420"
 
 IMAGE_INSTALL = "packagegroup-core-boot packagegroup-core-ssh-openssh packagegroup-self-hosted \
                  kernel-dev kernel-devsrc connman connman-plugin-ethernet dhcp-client \
                  tzdata python3-pip perl-misc"
 
 IMAGE_FEATURES += "x11-base package-management splash"
+
+QB_MEM = '${@bb.utils.contains("DISTRO_FEATURES", "opengl", "-m 512", "-m 256", d)}'
 
 # Ensure there's enough space to do a core-image-sato build, with rm_work enabled
 IMAGE_ROOTFS_EXTRA_SPACE = "41943040"
@@ -23,13 +24,14 @@ IMAGE_FSTYPES = "wic.vmdk"
 
 inherit core-image module-base setuptools3
 
-SRCREV ?= "1d57ca352f798dd671fd8c15ee4286644c49c4b9"
-SRC_URI = "git://git.yoctoproject.org/poky;branch=master \
+SRCREV ?= "8181681b33da272fef83276104d5c7a93f84da46"
+SRC_URI = "git://git.yoctoproject.org/poky \
            file://Yocto_Build_Appliance.vmx \
            file://Yocto_Build_Appliance.vmxf \
            file://README_VirtualBox_Guest_Additions.txt \
            file://README_VirtualBox_Toaster.txt \
           "
+RECIPE_NO_UPDATE_REASON = "Recipe is recursive and handled as part of the release process"
 BA_INCLUDE_SOURCES ??= "0"
 
 IMAGE_CMD_ext4_append () {
@@ -60,8 +62,10 @@ fakeroot do_populate_poky_src () {
 	cp ${WORKDIR}/README_VirtualBox_Toaster.txt ${IMAGE_ROOTFS}/home/builder/
 
 	# Create a symlink, needed for out-of-tree kernel modules build
-	rm -f  ${IMAGE_ROOTFS}/lib/modules/${KERNEL_VERSION}/build
-	lnr ${IMAGE_ROOTFS}${KERNEL_SRC_PATH} ${IMAGE_ROOTFS}/lib/modules/${KERNEL_VERSION}/build
+	if [ ! -e ${IMAGE_ROOTFS}/lib/modules/${KERNEL_VERSION}/build ]; then
+		rm -f  ${IMAGE_ROOTFS}/lib/modules/${KERNEL_VERSION}/build
+		lnr ${IMAGE_ROOTFS}${KERNEL_SRC_PATH} ${IMAGE_ROOTFS}/lib/modules/${KERNEL_VERSION}/build
+	fi
 
 	echo "INHERIT += \"rm_work\"" >> ${IMAGE_ROOTFS}/home/builder/poky/build/conf/auto.conf
 	echo "export LC_ALL=en_US.utf8" >> ${IMAGE_ROOTFS}/home/builder/.bashrc
@@ -78,7 +82,7 @@ fakeroot do_populate_poky_src () {
 	echo "# export ALL_PROXY=https://proxy.example.com:8080" >> ${IMAGE_ROOTFS}/home/builder/.bashrc
 	echo "# export ALL_PROXY=socks://socks.example.com:1080" >> ${IMAGE_ROOTFS}/home/builder/.bashrc
 
-	chown -R builder.builder ${IMAGE_ROOTFS}/home/builder/poky
+	chown -R builder:builder ${IMAGE_ROOTFS}/home/builder/poky
 	chmod -R ug+rw ${IMAGE_ROOTFS}/home/builder/poky
 
 	# Assume we will need CDROM to install guest additions
@@ -101,9 +105,13 @@ fakeroot do_populate_poky_src () {
 	export STAGING_INCDIR=${STAGING_INCDIR_NATIVE}
 	export HOME=${IMAGE_ROOTFS}/home/builder
 	mkdir -p ${IMAGE_ROOTFS}/home/builder/.cache/pip
-	pip3 install --user -I -U -v -r ${IMAGE_ROOTFS}/home/builder/poky/bitbake/toaster-requirements.txt
-	chown -R builder.builder ${IMAGE_ROOTFS}/home/builder/.local
-	chown -R builder.builder ${IMAGE_ROOTFS}/home/builder/.cache
+	pip3_install_params="--user -I -U -v -r ${IMAGE_ROOTFS}/home/builder/poky/bitbake/toaster-requirements.txt"
+	if [ -n "${http_proxy}" ]; then
+	   pip3_install_params="${pip3_install_params} --proxy ${http_proxy}"
+	fi
+	pip3 install ${pip3_install_params}
+	chown -R builder:builder ${IMAGE_ROOTFS}/home/builder/.local
+	chown -R builder:builder ${IMAGE_ROOTFS}/home/builder/.cache
 }
 
 IMAGE_PREPROCESS_COMMAND += "do_populate_poky_src; "
@@ -111,9 +119,9 @@ IMAGE_PREPROCESS_COMMAND += "do_populate_poky_src; "
 addtask rootfs after do_unpack
 
 python () {
-	# Ensure we run these usually noexec tasks
-	d.delVarFlag("do_fetch", "noexec")
-	d.delVarFlag("do_unpack", "noexec")
+    # Ensure we run these usually noexec tasks
+    d.delVarFlag("do_fetch", "noexec")
+    d.delVarFlag("do_unpack", "noexec")
 }
 
 create_bundle_files () {

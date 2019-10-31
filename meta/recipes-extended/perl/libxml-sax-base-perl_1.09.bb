@@ -1,4 +1,5 @@
 SUMMARY = "Base class SAX Drivers and Filters"
+HOMEPAGE = "http://search.cpan.org/dist/XML-SAX-Base/"
 DESCRIPTION = "This module has a very simple task - to be a base class for \
 PerlSAX drivers and filters. It's default behaviour is to pass \
 the input directly to the output unchanged. It can be useful to \
@@ -18,6 +19,8 @@ SRC_URI[sha256sum] = "66cb355ba4ef47c10ca738bd35999723644386ac853abbeb5132841f5e
 
 S = "${WORKDIR}/XML-SAX-Base-${PV}"
 
-inherit cpan
+inherit cpan ptest-perl
 
-BBCLASSEXTEND = "native"
+RDEPENDS_${PN}-ptest += "perl-module-test perl-module-test-more"
+
+BBCLASSEXTEND = "native nativesdk"

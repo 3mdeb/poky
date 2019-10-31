@@ -1,20 +1,16 @@
 #
 # Copyright (c) 2017, Intel Corporation.
 #
-# This program is free software; you can redistribute it and/or modify it
-# under the terms and conditions of the GNU General Public License,
-# version 2, as published by the Free Software Foundation.
-#
-# This program is distributed in the hope it will be useful, but WITHOUT
-# ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
-# FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
-# more details.
+# SPDX-License-Identifier: GPL-2.0-only
 #
 """Handling of build perf test reports"""
-from collections import OrderedDict, Mapping
+from collections import OrderedDict, Mapping, namedtuple
 from datetime import datetime, timezone
 from numbers import Number
 from statistics import mean, stdev, variance
+
+
+AggregateTestData = namedtuple('AggregateTestData', ['metadata', 'results'])
 
 
 def isofmt_to_timestamp(string):

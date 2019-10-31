@@ -1,21 +1,6 @@
-# ex:ts=4:sw=4:sts=4:et
-# -*- tab-width: 4; c-basic-offset: 4; indent-tabs-mode: nil -*-
-#
 # Copyright (c) 2013, Intel Corporation.
-# All rights reserved.
 #
-# This program is free software; you can redistribute it and/or modify
-# it under the terms of the GNU General Public License version 2 as
-# published by the Free Software Foundation.
-#
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-# GNU General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License along
-# with this program; if not, write to the Free Software Foundation, Inc.,
-# 51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # DESCRIPTION
 # This module implements some basic help invocation functions along
@@ -155,7 +140,7 @@ SYNOPSIS
         [-e | --image-name] [-s, --skip-build-check] [-D, --debug]
         [-r, --rootfs-dir] [-b, --bootimg-dir]
         [-k, --kernel-dir] [-n, --native-sysroot] [-f, --build-rootfs]
-        [-c, --compress-with] [-m, --bmap]
+        [-c, --compress-with] [-m, --bmap] [--no-fstab-update]
 
 DESCRIPTION
     This command creates an OpenEmbedded image based on the 'OE
@@ -227,6 +212,11 @@ DESCRIPTION
 
     The -m option is used to produce .bmap file for the image. This file
     can be used to flash image using bmaptool utility.
+
+    The --no-fstab-update option is used to doesn't change fstab file. When
+    using this option the final fstab file will be same that in rootfs and
+    wic doesn't update file, e.g adding a new mount point. User can control
+    the fstab file content in base-files recipe.
 """
 
 wic_list_usage = """
@@ -288,10 +278,10 @@ wic_ls_usage = """
 
  List content of a partitioned image
 
- usage: wic ls <image>[:<vfat partition>[<path>]] [--native-sysroot <path>]
+ usage: wic ls <image>[:<partition>[<path>]] [--native-sysroot <path>]
 
  This command  outputs either list of image partitions or directory contents
- of vfat partitions.
+ of vfat and ext* partitions.
 
  See 'wic help ls' for more detailed instructions.
 
@@ -300,17 +290,17 @@ wic_ls_usage = """
 wic_ls_help = """
 
 NAME
-    wic ls - List contents of partitioned image or vfat partitions
+    wic ls - List contents of partitioned image or partition
 
 SYNOPSIS
     wic ls <image>
-    wic ls <image>:<vfat partition>
-    wic ls <image>:<vfat partition><path>
-    wic ls <image>:<vfat partition><path> --native-sysroot <path>
+    wic ls <image>:<vfat or ext* partition>
+    wic ls <image>:<vfat or ext* partition><path>
+    wic ls <image>:<vfat or ext* partition><path> --native-sysroot <path>
 
 DESCRIPTION
     This command lists either partitions of the image or directory contents
-    of vfat partitions.
+    of vfat or ext* partitions.
 
     The first form it lists partitions of the image.
     For example:
@@ -319,7 +309,7 @@ DESCRIPTION
         1        1048576     24438783     23390208  fat16
         2       25165824     50315263     25149440  ext4
 
-    Second and third form list directory content of vfat partition:
+    Second and third form list directory content of the partition:
         $ wic ls tmp/deploy/images/qemux86-64/core-image-minimal-qemux86-64.wic:1
         Volume in drive : is boot
          Volume Serial Number is 2DF2-5F02
@@ -351,12 +341,12 @@ DESCRIPTION
 
 wic_cp_usage = """
 
- Copy files and directories to the vfat partitions
+ Copy files and directories to the vfat or ext* partition
 
- usage: wic cp <src> <image>:<vfat partition>[<path>] [--native-sysroot <path>]
+ usage: wic cp <src> <image>:<partition>[<path>] [--native-sysroot <path>]
 
- This command  copies local files or directories to the vfat partitions of partitioned
- image.
+ This command  copies local files or directories to the vfat or ext* partitions
+of partitioned  image.
 
  See 'wic help cp' for more detailed instructions.
 
@@ -365,19 +355,19 @@ wic_cp_usage = """
 wic_cp_help = """
 
 NAME
-    wic cp - copy files and directories to the vfat partitions
+    wic cp - copy files and directories to the vfat or ext* partitions
 
 SYNOPSIS
-    wic cp <src> <image>:<vfat partition>
-    wic cp <src> <image>:<vfat partition><path>
-    wic cp <src> <image>:<vfat partition><path> --native-sysroot <path>
+    wic cp <src> <image>:<partition>
+    wic cp <src> <image>:<partition><path>
+    wic cp <src> <image>:<partition><path> --native-sysroot <path>
 
 DESCRIPTION
-    This command copies files and directories to the vfat partition of the
-    wic image.
+    This command copies files and directories to the vfat or ext* partition of
+    the partitioned image.
 
     The first form of it copies file or directory to the root directory of
-    the vfat partition:
+    the partition:
         $ wic cp test.wks tmp/deploy/images/qemux86-64/core-image-minimal-qemux86-64.wic:1
         $ wic ls tmp/deploy/images/qemux86-64/core-image-minimal-qemux86-64.wic:1
         Volume in drive : is boot
@@ -393,7 +383,7 @@ DESCRIPTION
                                  15 677 440 bytes free
 
     The second form of the command copies file or directory to the specified directory
-    on the vfat partition:
+    on the partition:
        $ wic cp test tmp/deploy/images/qemux86-64/core-image-minimal-qemux86-64.wic:1/efi/
        $ wic ls tmp/deploy/images/qemux86-64/core-image-minimal-qemux86-64.wic:1/efi/
        Volume in drive : is boot
@@ -413,12 +403,12 @@ DESCRIPTION
 
 wic_rm_usage = """
 
- Remove files or directories from the vfat partitions
+ Remove files or directories from the vfat or ext* partitions
 
- usage: wic rm <image>:<vfat partition><path> [--native-sysroot <path>]
+ usage: wic rm <image>:<partition><path> [--native-sysroot <path>]
 
- This command  removes files or directories from the vfat partitions of partitioned
- image.
+ This command  removes files or directories from the vfat or ext* partitions of
+ the partitioned image.
 
  See 'wic help rm' for more detailed instructions.
 
@@ -427,15 +417,15 @@ wic_rm_usage = """
 wic_rm_help = """
 
 NAME
-    wic rm - remove files or directories from the vfat partitions
+    wic rm - remove files or directories from the vfat or ext* partitions
 
 SYNOPSIS
-    wic rm <src> <image>:<vfat partition><path>
-    wic rm <src> <image>:<vfat partition><path> --native-sysroot <path>
+    wic rm <src> <image>:<partition><path>
+    wic rm <src> <image>:<partition><path> --native-sysroot <path>
 
 DESCRIPTION
-    This command removes files or directories from the vfat partition of the
-    wic image:
+    This command removes files or directories from the vfat or ext* partition of the
+    partitioned image:
 
         $ wic ls ./tmp/deploy/images/qemux86-64/core-image-minimal-qemux86-64.wic:1
         Volume in drive : is boot
@@ -466,6 +456,46 @@ DESCRIPTION
 
     The -n option is used to specify the path to the native sysroot
     containing the tools(parted and mtools) to use.
+"""
+
+wic_write_usage = """
+
+ Write image to a device
+
+ usage: wic write <image> <target device> [--expand [rules]] [--native-sysroot <path>]
+
+ This command writes partitioned image to a target device (USB stick, SD card etc).
+
+ See 'wic help write' for more detailed instructions.
+
+"""
+
+wic_write_help = """
+
+NAME
+    wic write - write an image to a device
+
+SYNOPSIS
+    wic write <image> <target>
+    wic write <image> <target> --expand auto
+    wic write <image> <target> --expand 1:100M-2:300M
+    wic write <image> <target> --native-sysroot <path>
+
+DESCRIPTION
+    This command writes an image to a target device (USB stick, SD card etc)
+
+        $ wic write ./tmp/deploy/images/qemux86-64/core-image-minimal-qemux86-64.wic /dev/sdb
+
+    The --expand option is used to resize image partitions.
+    --expand auto expands partitions to occupy all free space available on the target device.
+    It's also possible to specify expansion rules in a format
+    <partition>:<size>[-<partition>:<size>...] for one or more partitions.
+    Specifying size 0 will keep partition unmodified.
+    Note: Resizing boot partition can result in non-bootable image for non-EFI images. It is
+    recommended to use size 0 for boot partition to keep image bootable.
+
+    The --native-sysroot option is used to specify the path to the native sysroot
+    containing the tools(parted, resize2fs) to use.
 """
 
 wic_plugins_help = """
@@ -530,6 +560,10 @@ DESCRIPTION
           Called to do the actual content population for a
           partition. In other words, it 'prepares' the final partition
           image which will be incorporated into the disk image.
+
+      do_post_partition()
+          Called after the partition is created. It is useful to add post
+          operations e.g. signing the partition.
 
       do_configure_partition()
           Called before do_prepare_partition(), typically used to
@@ -817,8 +851,11 @@ DESCRIPTION
        Partitions with a <mountpoint> specified will be automatically mounted.
        This is achieved by wic adding entries to the fstab during image
        generation. In order for a valid fstab to be generated one of the
-       --ondrive, --ondisk or --use-uuid partition options must be used for
-       each partition that specifies a mountpoint.
+       --ondrive, --ondisk, --use-uuid or --use-label partition options must
+       be used for each partition that specifies a mountpoint.  Note that with
+       --use-{uuid,label} and non-root <mountpoint>, including swap, the mount
+       program must understand the PARTUUID or LABEL syntax.  This currently
+       excludes the busybox versions of these applications.
 
 
        The following are supported 'part' options:
@@ -893,6 +930,14 @@ DESCRIPTION
                         label is already in use by another filesystem,
                         a new label is created for the partition.
 
+         --use-label: This option is specific to wic. It makes wic to use the
+                      label in /etc/fstab to specify a partition. If the
+                      --use-label and --use-uuid are used at the same time,
+                      we prefer the uuid because it is less likely to cause
+                      name confliction. We don't support using this parameter
+                      on the root partition since it requires an initramfs to
+                      parse this value and we do not currently support that.
+
          --active: Marks the partition as active.
 
          --align (in KBytes): This option is specific to wic and says
@@ -925,6 +970,8 @@ DESCRIPTION
                             This option cannot be used with --fixed-size
                             option.
 
+         --part-name: This option is specific to wic. It specifies name for GPT partitions.
+
          --part-type: This option is specific to wic. It specifies partition
                       type GUID for GPT partitions.
                       List of partition type GUIDS can be found here:
@@ -938,6 +985,11 @@ DESCRIPTION
                  It's useful if preconfigured partition UUID is added to kernel command line
                  in bootloader configuration before running wic. In this case .wks file can
                  be generated or modified to set preconfigured parition UUID using this option.
+
+         --fsuuid: This option is specific to wic. It specifies filesystem UUID.
+                   It's useful if preconfigured filesystem UUID is added to kernel command line
+                   in bootloader configuration before running wic. In this case .wks file can
+                   be generated or modified to set preconfigured filesystem UUID using this option.
 
          --system-id: This option is specific to wic. It specifies partition system id. It's useful
                       for the harware that requires non-default partition system ids. The parameter
