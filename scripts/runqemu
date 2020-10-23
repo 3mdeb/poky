@@ -1265,7 +1265,7 @@ class BaseConfig(object):
         """attempt to determine the appropriate qemu-system binary"""
         mach = self.get('MACHINE')
         if not mach:
-            search = '.*(qemux86-64|qemux86|qemuarm64|qemuarm|qemumips64|qemumips64el|qemumipsel|qemumips|qemuppc).*'
+            search = '.*(qemux86-64|qemux86|qemuarm64|qemuarm|qemumips64|qemumips64el|qemumipsel|qemumips|qemuppc|qemuppc64).*'
             if self.rootfs:
                 match = re.match(search, self.rootfs)
                 if match:
@@ -1288,6 +1288,8 @@ class BaseConfig(object):
             qbsys = 'x86_64'
         elif mach == 'qemuppc':
             qbsys = 'ppc'
+        elif mach == 'qemuppc64':
+            qbsys = 'ppc64'
         elif mach == 'qemumips':
             qbsys = 'mips'
         elif mach == 'qemumips64':
@@ -1303,7 +1305,7 @@ class BaseConfig(object):
         else:
             logger.error("Unable to determine QEMU PC System emulator for %s machine." % mach)
             logger.error("As %s is not among valid QEMU machines such as," % mach)
-            logger.error("qemux86-64, qemux86, qemuarm64, qemuarm, qemumips64, qemumips64el, qemumipsel, qemumips, qemuppc")
+            logger.error("qemux86-64, qemux86, qemuarm64, qemuarm, qemumips64, qemumips64el, qemumipsel, qemumips, qemuppc, qemuppc64")
             raise RunQemuError("Set qb_system_name with suitable QEMU PC System emulator in .*qemuboot.conf.")
 
         return 'qemu-system-%s' % qbsys
