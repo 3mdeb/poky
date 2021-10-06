@@ -23,13 +23,13 @@ SRCREV_machine:qemux86 ?= "164ed895bc1e94722e80fe6496b176f6bb815cd4"
 SRCREV_machine:qemux86-64 ?= "164ed895bc1e94722e80fe6496b176f6bb815cd4"
 SRCREV_machine:qemumips64 ?= "a615aa60bc10bea5262f2d65da7ddff4ba32146e"
 SRCREV_machine ?= "164ed895bc1e94722e80fe6496b176f6bb815cd4"
-SRCREV_meta ?= "bce2813b162bb472c137fb503951295a931c25b6"
+SRCREV_meta ?= "9ae6444b8650fcc9811a54be8a9db63b42eadfe1"
 
 # remap qemuarm to qemuarma15 for the 5.8 kernel
 # KMACHINE:qemuarm ?= "qemuarma15"
 
 SRC_URI = "git://git.yoctoproject.org/linux-yocto.git;name=machine;branch=${KBRANCH}; \
-           git://git.yoctoproject.org/yocto-kernel-cache;type=kmeta;name=meta;branch=yocto-5.10;destsuffix=${KMETA}"
+           git://git@github.com/3mdeb/yocto-kernel-cache;type=kmeta;name=meta;branch=qemuppc64-rebased-2;destsuffix=${KMETA}"
 
 LIC_FILES_CHKSUM = "file://COPYING;md5=6bc538ed5bd9a7fc9398086aedcd7e46"
 LINUX_VERSION ?= "5.10.63"
